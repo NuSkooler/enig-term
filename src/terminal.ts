@@ -76,6 +76,7 @@ const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 30_000;
 const STABLE_MS = 10_000;
 const PASTE_CHUNK = 256;
+const REPLY_BURST = 8;
 const PASTE_GAP_MS = 10;
 
 export class Terminal {
@@ -382,6 +383,10 @@ export class Terminal {
     private onEvent(ev: CoreEvent): void {
         switch (ev.t) {
             case 'req': {
+                if (!this.replyAllowed(ev.k)) {
+                    this.logLine(`req ${JSON.stringify(ev)} -> (suppressed: answer loop?)`);
+                    break;
+                }
                 const reply = replyFor(ev, {
                     debugCtermDa: this.hooks.debugCtermDa,
                     links: true,
@@ -413,6 +418,24 @@ export class Terminal {
                 this.logLine(`${ev.t} ${JSON.stringify(ev)}`);
         }
     }
+
+    /**
+     * Answer-loop guard. A host that echoes what it receives (a line editor
+     * before login, a misconfigured door) turns some replies into new
+     * requests: our CTDA answer `CSI < 0;1;2;3;5 c` parses as another CTDA
+     * request. Answer each kind of request at most REPLY_BURST times per
+     * second; the rest are logged and dropped.
+     */
+    private replyAllowed(kind: string): boolean {
+        const now = performance.now();
+        const w = this.replyWindow.get(kind);
+        if (!w || now - w.start > 1000) {
+            this.replyWindow.set(kind, { start: now, n: 1 });
+            return true;
+        }
+        return ++w.n <= REPLY_BURST;
+    }
+    private readonly replyWindow = new Map<string, { start: number; n: number }>();
 
     // --- engine recovery -------------------------------------------------------
 

@@ -16,7 +16,7 @@ test('negotiation and connect probes against an ENiGMA-like host', async ({ page
     const text = String.fromCharCode(...conn.sent);
     const v = pkgVersion().split('.').join(';');
     expect(text).toBe(`${CSI}=101;110;105;103;45;116;101;114;109;${v}c${CSI}<0;1;2;3;5c${CSI}1;1R${CSI}0n${CSI}=6;1n${CSI}25;80R`);
-    expect(await rowText(page, 0)).toBe('fake-bbs script=probe');
+    await expect.poll(() => rowText(page, 0)).toBe('fake-bbs script=probe');
 
     // NAWS goes out on every resize.
     await page.evaluate(() => (window as any).enigTerm.resize(100, 31));
@@ -40,6 +40,10 @@ test('host input dials; URL ?endpoint=&connect=1 works; the button reconnects', 
     await waitState(page, 'connected');
     await page.keyboard.type('hi');
     await expect.poll(async () => String.fromCharCode(...((await fakeLog(page, id))[0]?.sent ?? [])).endsWith('hi')).toBe(true);
+    // The echo host bounces our CTDA answer back, which parses as a new CTDA
+    // request: the answer-loop guard must stop that.
+    const ctda = String.fromCharCode(...(await fakeLog(page, id))[0].sent).split('[<0;1;2;3;5c').length - 1;
+    expect(ctda).toBeLessThanOrEqual(10);
     await page.locator('enig-term').locator('[data-act="connect"]').click(); // disconnect
     await waitState(page, 'closed');
     await page.locator('enig-term').locator('[data-act="connect"]').click(); // reconnect

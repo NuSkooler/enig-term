@@ -41,6 +41,9 @@ test('custom element and mount() on a foreign page: no CSS leakage either way, a
     const id = `embed-${ti.project.name}-${Date.now()}-${ti.repeatEachIndex}`;
     await page.evaluate(u => (window as any).handles[0].connect(u), fakeUrl(page, 'probe', id));
     await expect.poll(() => page.evaluate(() => (window as any).events.filter((e: any) => e[0] === 'state').map((e: any) => e[1]))).toEqual(expect.arrayContaining(['connecting', 'connected']));
+    // Wait for the host's greeting (it clears the screen) before drawing our own link.
+    const row0 = () => page.evaluate(() => String.fromCharCode(...Array.from((window as any).handles[0].terminal.core.core.row_cells(0) as Uint32Array, v => v & 0xffff)).trimEnd());
+    await expect.poll(row0).toBe('fake-bbs script=probe');
     await page.evaluate(
         ([esc, st]) => {
             const h = (window as any).handles[0];
@@ -49,15 +52,19 @@ test('custom element and mount() on a foreign page: no CSS leakage either way, a
         },
         [ESC, ST],
     );
-    const box = await page.locator('#el').locator('canvas').boundingBox();
-    const dialogs: string[] = [];
     await page.evaluate(() => document.getElementById('el')!.addEventListener('link', e => e.preventDefault()));
-    await page.mouse.click(box!.x + box!.width / 160, box!.y + box!.height / 50);
+    // Let layout settle (the status text changes size as the state changes), then click cell (0, 0).
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const pt = await page.evaluate(() => {
+        const t = (window as any).handles[0].terminal;
+        const r = t.canvas.getBoundingClientRect();
+        return { x: r.left + r.width / t.core.cols / 2, y: r.top + r.height / t.core.rows / 2 };
+    });
+    await page.mouse.click(pt.x, pt.y);
     await expect.poll(() => page.evaluate(() => (window as any).events.map((e: any) => e[0]))).toEqual(expect.arrayContaining(['title', 'bell', 'link']));
     const ev = await page.evaluate(() => (window as any).events);
     expect(ev).toEqual(expect.arrayContaining([['title', 'Board Title'], ['link', 'https://l.example/']]));
     await expect(page.locator('#el').locator('dialog')).toBeHidden(); // the page handled the link
-    void dialogs;
     void CSI;
 });
 
