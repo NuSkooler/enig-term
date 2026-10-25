@@ -1,0 +1,23 @@
+diff --git a/crates/icy_engine/src/scrollback_buffer/mod.rs b/crates/icy_engine/src/scrollback_buffer/mod.rs
+index 68a4b8b..cb3cd60 100644
+--- a/crates/icy_engine/src/scrollback_buffer/mod.rs
++++ b/crates/icy_engine/src/scrollback_buffer/mod.rs
+@@ -21,7 +21,8 @@ pub struct ScrollbackChunk {
+ 
+ impl ScrollbackChunk {
+     pub fn from_screen(screen: &dyn Screen, height: i32) -> Self {
+-        let (size, rgba_data) = render_scrollback_region(screen, height);
++        // SPIKE PATCH: keep cells only; no RGBA raster per scrolled line / clear.
++        let (size, rgba_data) = (Size::new(screen.resolution().width, height), Vec::new());
+         let rows = (size.height / screen.font_dimensions().height.max(1)).min(screen.height());
+         let text = (0..rows)
+             .map(|row| {
+@@ -92,7 +93,7 @@ impl ScrollbackBuffer {
+     }
+ 
+     pub fn push_chunk(&mut self, chunk: ScrollbackChunk) {
+-        if chunk.rgba_data.is_empty() {
++        if chunk.rgba_data.is_empty() && chunk.text.is_empty() {
+             return;
+         }
+         self.chunks.push(chunk);
