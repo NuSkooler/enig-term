@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Build the WASM core: cargo -> wasm-bindgen (web target) -> wasm-opt -Oz.
+#
+# Needs: rustup toolchain with wasm32-unknown-unknown, wasm-bindgen-cli 0.2.129
+# (must match the wasm-bindgen crate version in Cargo.toml), and optionally
+# binaryen's wasm-opt. Override tool paths with WASM_BINDGEN / WASM_OPT.
+# CARGO_TOOLCHAIN defaults to "stable".
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CRATE="$ROOT/crates/enig-term-core"
+OUT="$ROOT/build/wasm"
+TOOLCHAIN="${CARGO_TOOLCHAIN:-stable}"
+FEATURES="${CORE_FEATURES:-}"
+WASM_BINDGEN="${WASM_BINDGEN:-wasm-bindgen}"
+WASM_OPT="${WASM_OPT:-wasm-opt}"
+
+cd "$CRATE"
+cargo "+$TOOLCHAIN" build --release --target wasm32-unknown-unknown ${FEATURES:+--features "$FEATURES"}
+RAW="$CRATE/target/wasm32-unknown-unknown/release/enig_term_core.wasm"
+
+rm -rf "$OUT" && mkdir -p "$OUT"
+"$WASM_BINDGEN" --target web --no-typescript --out-dir "$OUT" "$RAW"
+
+if command -v "$WASM_OPT" >/dev/null 2>&1; then
+    "$WASM_OPT" -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
+        --enable-mutable-globals --enable-reference-types --enable-multivalue \
+        "$OUT/enig_term_core_bg.wasm" -o "$OUT/enig_term_core_bg.opt.wasm"
+    mv "$OUT/enig_term_core_bg.opt.wasm" "$OUT/enig_term_core_bg.wasm"
+else
+    echo "warning: wasm-opt not found; WASM is not size-optimised" >&2
+fi
+
+raw=$(stat -c %s "$RAW")
+opt=$(stat -c %s "$OUT/enig_term_core_bg.wasm")
+gz=$(gzip -9 -c "$OUT/enig_term_core_bg.wasm" | wc -c)
+echo "wasm: cargo ${raw} B, bindgen+wasm-opt ${opt} B, gzip -9 ${gz} B"

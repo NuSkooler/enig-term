@@ -1,0 +1,7 @@
+node_modules/
+crates/*/target/
+build/
+dist/
+test-results/
+playwright-report/
+*.log

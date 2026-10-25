@@ -1,0 +1,38 @@
+[package]
+name = "enig-term-core"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-2-Clause"
+description = "WASM emulation core for enig-term: a thin wasm-bindgen wrapper around icy_engine"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# icy_tools is pinned to an exact revision. Several of icy_tools' own git
+# dependencies (icy_sauce, retrofont, libyaff, codepages) are declared WITHOUT a
+# rev upstream, so our Cargo.lock is the only thing that pins them: commit it.
+icy_engine = { git = "https://github.com/mkrueger/icy_tools", rev = "1456074edac862d79d87ccd8cd4f0e87a57a9d39" }
+icy_parser_core = { git = "https://github.com/mkrueger/icy_tools", rev = "1456074edac862d79d87ccd8cd4f0e87a57a9d39" }
+# Same source spec as icy_engine uses (no rev), so both resolve to one copy;
+# Cargo.lock pins it.
+icy_sauce = { git = "https://github.com/mkrueger/icy_sauce" }
+wasm-bindgen = "=0.2.129"
+serde_json = "1"
+
+[features]
+default = []
+# Whole-file viewer path through icy_engine's FileFormat loaders. It pulls in
+# every format loader (images, XBin, IcyDraw, archives ...) and roughly doubles
+# the WASM, so it is off by default. SAUCE art works without it (load_sauce_art).
+viewer = []
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]
