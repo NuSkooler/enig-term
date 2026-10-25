@@ -31,13 +31,15 @@ const OPT_NEW_ENVIRON = 39;
 const TTYPE_IS = 0;
 const TTYPE_SEND = 1;
 
-const enum S {
-    Data,
-    Iac,
-    Negotiate, // awaiting option byte after WILL/WONT/DO/DONT
-    Sb,
-    SbIac,
-}
+// Parser states (plain constants so Node's type stripping can load this file).
+const S = {
+    Data: 0,
+    Iac: 1,
+    Negotiate: 2, // awaiting option byte after WILL/WONT/DO/DONT
+    Sb: 3,
+    SbIac: 4,
+} as const;
+type State = (typeof S)[keyof typeof S];
 
 const OPTION_NAMES: Record<number, string> = {
     [OPT_BINARY]: 'BINARY',
@@ -58,7 +60,7 @@ export class TelnetClient {
     getSize: () => { cols: number; rows: number };
     onLog: ((msg: string) => void) | null = null;
 
-    private state = S.Data;
+    private state: State = S.Data;
     private verb = 0;
     private sb: number[] = [];
     // Options we are willing to enable on our side.

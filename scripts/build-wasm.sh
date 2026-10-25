@@ -19,7 +19,7 @@ cargo "+$TOOLCHAIN" build --release --target wasm32-unknown-unknown ${FEATURES:+
 RAW="$CRATE/target/wasm32-unknown-unknown/release/enig_term_core.wasm"
 
 rm -rf "$OUT" && mkdir -p "$OUT"
-"$WASM_BINDGEN" --target web --no-typescript --out-dir "$OUT" "$RAW"
+"$WASM_BINDGEN" --target web --out-dir "$OUT" "$RAW"
 
 if command -v "$WASM_OPT" >/dev/null 2>&1; then
     "$WASM_OPT" -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \

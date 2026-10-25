@@ -1,0 +1,24 @@
+{
+  "name": "enig-term",
+  "version": "0.1.0",
+  "description": "Browser BBS terminal: icy_engine in WASM, a TypeScript shell, WebGL2 output",
+  "license": "BSD-2-Clause",
+  "author": "Bryan D. Ashby",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "scripts/build-wasm.sh",
+    "build:js": "node scripts/build-js.mjs",
+    "build": "npm run build:wasm && npm run build:js",
+    "typecheck": "tsc --noEmit",
+    "serve": "node scripts/serve.mjs",
+    "test:unit": "node --test test/core.test.mjs test/shell.test.mjs",
+    "test:browser": "playwright test",
+    "test": "npm run typecheck && npm run test:unit && npm run test:browser"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  }
+}

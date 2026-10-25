@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>enig-term</title>
+<style>
+  :root { color-scheme: dark; --bg: #0b0b0e; --panel: #16161c; --edge: #2a2a33; --ink: #d6d6de; --dim: #8a8a96; --accent: #5fd3a6; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+  .bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .5rem 16px; background: var(--panel); border-bottom: 1px solid var(--edge); }
+  .bar input { flex: 1 1 14rem; min-width: 0; background: var(--bg); color: var(--ink); border: 1px solid var(--edge); padding: .35rem .5rem; font: inherit; }
+  button { background: var(--bg); color: var(--ink); border: 1px solid var(--edge); padding: .35rem .7rem; font: inherit; cursor: pointer; }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  [data-status] { color: var(--dim); font-size: 12px; }
+  .stage { display: flex; justify-content: center; padding: 12px 16px; }
+  .enig-term { position: relative; width: 100%; max-width: 1280px; display: flex; justify-content: center; }
+  .enig-term__screen { display: block; background: #000; touch-action: manipulation; }
+  .keys { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: center; padding: 0 16px 16px; }
+  .keys[hidden] { display: none; }
+  .keys button { min-width: 2.75rem; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <input data-endpoint placeholder="wss://host:port" aria-label="Endpoint" spellcheck="false">
+    <button data-act="connect" type="button">Connect</button>
+    <button data-act="aspect" type="button" title="4:3 aspect correction">4:3</button>
+    <button data-act="sharp" type="button" title="Sharp-bilinear scaling">Sharp</button>
+    <button data-act="crt" type="button">CRT</button>
+    <button data-act="keys" type="button">Keys</button>
+    <span data-status data-state="idle">idle</span>
+  </div>
+  <div class="stage"><div data-term></div></div>
+  <div class="keys" data-keys hidden>
+    <button type="button" tabindex="-1" data-key="esc">Esc</button>
+    <button type="button" tabindex="-1" data-key="tab">Tab</button>
+    <button type="button" tabindex="-1" data-key="left" aria-label="Left">&larr;</button>
+    <button type="button" tabindex="-1" data-key="up" aria-label="Up">&uarr;</button>
+    <button type="button" tabindex="-1" data-key="down" aria-label="Down">&darr;</button>
+    <button type="button" tabindex="-1" data-key="right" aria-label="Right">&rarr;</button>
+  </div>
+  <script type="module" src="enig-term.js"></script>
+</body>
+</html>
