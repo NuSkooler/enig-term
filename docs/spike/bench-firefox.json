@@ -1,0 +1,75 @@
+{
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0.2) Gecko/20100101 Firefox/150.0.2",
+  "renderer": "2d",
+  "glRenderer": "n/a",
+  "canvas": [
+    1248,
+    936
+  ],
+  "frame": [
+    640,
+    400
+  ],
+  "full": {
+    "kind": 2,
+    "bandHeightPx": 400,
+    "writeMs": 0,
+    "engineMs": 3.76,
+    "uploadMs": 0.09333333333333334,
+    "drawMs": 0.47333333333333333,
+    "totalMs": 4.326666666666666
+  },
+  "fullCrt": {
+    "kind": 2,
+    "bandHeightPx": 400,
+    "writeMs": 0,
+    "engineMs": 1.7866666666666666,
+    "uploadMs": 0.09333333333333334,
+    "drawMs": 0.5633333333333334,
+    "totalMs": 2.4433333333333334
+  },
+  "oneChar": {
+    "kind": 1,
+    "bandHeightPx": 16,
+    "writeMs": 0.006666666666666667,
+    "engineMs": 0.4266666666666667,
+    "uploadMs": 0.0033333333333333335,
+    "drawMs": 0.4633333333333333,
+    "totalMs": 0.8933333333333333
+  },
+  "oneLine": {
+    "kind": 1,
+    "bandHeightPx": 16,
+    "writeMs": 0.013333333333333334,
+    "engineMs": 0.45,
+    "uploadMs": 0.0033333333333333335,
+    "drawMs": 0.5,
+    "totalMs": 0.9533333333333334
+  },
+  "scroll": {
+    "kind": 1,
+    "bandHeightPx": 400,
+    "writeMs": 0.26666666666666666,
+    "engineMs": 1.81,
+    "uploadMs": 0.09,
+    "drawMs": 0.5166666666666667,
+    "totalMs": 2.416666666666667
+  },
+  "cursorOnly": {
+    "kind": 0,
+    "bandHeightPx": 0,
+    "writeMs": 0,
+    "engineMs": 0.32666666666666666,
+    "uploadMs": 0,
+    "drawMs": 0.53,
+    "totalMs": 0.8566666666666667
+  },
+  "feed": {
+    "synthMB": 2.000016,
+    "feedMBs": 6.024144578313253,
+    "scrollFeedMBs": 0.21418547868922683,
+    "feedRenderMBs": 0.18587955390334573,
+    "framesInFeedRender": 489,
+    "artMBs": 0.8391096979332274
+  }
+}

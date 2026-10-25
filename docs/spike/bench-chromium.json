@@ -1,0 +1,75 @@
+{
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.96 Safari/537.36",
+  "renderer": "webgl2",
+  "glRenderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+  "canvas": [
+    1248,
+    936
+  ],
+  "frame": [
+    640,
+    400
+  ],
+  "full": {
+    "kind": 2,
+    "bandHeightPx": 400,
+    "writeMs": 0.00033333341280619304,
+    "engineMs": 0.8033333329359691,
+    "uploadMs": 0.19366666674613953,
+    "drawMs": 0.026333333253860475,
+    "totalMs": 1.023333332935969
+  },
+  "fullCrt": {
+    "kind": 2,
+    "bandHeightPx": 400,
+    "writeMs": 0,
+    "engineMs": 0.5886666667461395,
+    "uploadMs": 0.12433333357175191,
+    "drawMs": 0.01933333357175191,
+    "totalMs": 0.7323333338896434
+  },
+  "oneChar": {
+    "kind": 1,
+    "bandHeightPx": 16,
+    "writeMs": 0.011333333651224771,
+    "engineMs": 0.1696666661898295,
+    "uploadMs": 0.045,
+    "drawMs": 0.015,
+    "totalMs": 0.2296666661898295
+  },
+  "oneLine": {
+    "kind": 1,
+    "bandHeightPx": 16,
+    "writeMs": 0.03333333333333333,
+    "engineMs": 0.13299999992052713,
+    "uploadMs": 0.004333333174387614,
+    "drawMs": 0.008666666746139527,
+    "totalMs": 0.14599999984105427
+  },
+  "scroll": {
+    "kind": 1,
+    "bandHeightPx": 400,
+    "writeMs": 0.11366666674613952,
+    "engineMs": 0.7433333333333333,
+    "uploadMs": 0.12833333333333333,
+    "drawMs": 0.010333333412806194,
+    "totalMs": 0.8820000000794728
+  },
+  "cursorOnly": {
+    "kind": 0,
+    "bandHeightPx": 0,
+    "writeMs": 0.0040000001589457195,
+    "engineMs": 0.11466666658719381,
+    "uploadMs": 0,
+    "drawMs": 0.010666666428248088,
+    "totalMs": 0.1253333330154419
+  },
+  "feed": {
+    "synthMB": 2.000016,
+    "feedMBs": 26.95439355698017,
+    "scrollFeedMBs": 1.8277108652739396,
+    "feedRenderMBs": 0.650067929940032,
+    "framesInFeedRender": 489,
+    "artMBs": 2.552224370490574
+  }
+}

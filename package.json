@@ -14,7 +14,10 @@
     "serve": "node scripts/serve.mjs",
     "test:unit": "node --test test/core.test.mjs test/shell.test.mjs",
     "test:browser": "playwright test",
-    "test": "npm run typecheck && npm run test:unit && npm run test:browser"
+    "test": "npm run typecheck && npm run test:unit && npm run test:browser",
+    "bench": "ENIG_TERM_BENCH=1 playwright test test/bench.spec.ts && node test/bench-core.mjs",
+    "test:live": "playwright test --project=chromium test/live.spec.ts",
+    "fixtures": "node test/fixtures/make-fixtures.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",

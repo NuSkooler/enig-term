@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const WASM_DIR = path.join(here, '..', 'build', 'wasm');
+export const WASM_DIR = process.env.ENIG_TERM_WASM_DIR ?? path.join(here, '..', 'build', 'wasm');
 
 export const ESC = String.fromCharCode(0x1b);
 export const CSI = ESC + '[';

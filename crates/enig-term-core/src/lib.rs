@@ -43,6 +43,11 @@ fn install_panic_hook() {
     });
 }
 
+/// icy_engine's default keeps 2000 RGBA chunks (a 640x16 line is 40 KB; a full
+/// clear is the whole 1 MB frame), i.e. up to gigabytes. The shell does not use
+/// the engine's scrollback yet, so keep none by default.
+const DEFAULT_SCROLLBACK_CHUNKS: usize = 0;
+
 /// Highest SyncTERM font number with a built-in table entry in icy_engine.
 const LAST_BUILTIN_FONT: usize = 42;
 
@@ -277,6 +282,7 @@ pub struct Core {
     snapshot: Vec<AttributedChar>,
     snapshot_dims: (i32, i32),
     ice_rendered: bool,
+    scrollback_limit: usize,
 }
 
 #[wasm_bindgen]
@@ -288,7 +294,7 @@ impl Core {
         let emulation = emulation_from(emulation);
         let (mut screen, parser) = ScreenMode::Vga(cols as i32, rows as i32).create_screen(emulation, None);
         screen.terminal_state_mut().is_terminal_buffer = true;
-        Core {
+        let mut core = Core {
             screen,
             parser,
             emulation,
@@ -308,7 +314,10 @@ impl Core {
             snapshot: Vec::new(),
             snapshot_dims: (0, 0),
             ice_rendered: false,
-        }
+            scrollback_limit: DEFAULT_SCROLLBACK_CHUNKS,
+        };
+        core.screen.set_scrollback_buffer_size(DEFAULT_SCROLLBACK_CHUNKS);
+        core
     }
 
     /// Feed host bytes (after Telnet de-framing). Returns the number of queued events.
@@ -348,9 +357,19 @@ impl Core {
         let (c, r) = (self.cols(), self.rows());
         let (mut screen, parser) = ScreenMode::Vga(c as i32, r as i32).create_screen(self.emulation, None);
         screen.terminal_state_mut().is_terminal_buffer = true;
+        screen.set_scrollback_buffer_size(self.scrollback_limit);
         self.screen = screen;
         self.parser = parser;
         self.force_full = true;
+    }
+
+    /// icy_engine keeps scrollback as RGBA chunks: one per scrolled line
+    /// (cols*8 x 16 px) and one per full-screen clear (the whole frame). The
+    /// default cap is 2000 *chunks*. 0 keeps none, but each scroll or clear is
+    /// still rasterised before being dropped (engine behaviour).
+    pub fn set_scrollback_limit(&mut self, chunks: u32) {
+        self.scrollback_limit = chunks as usize;
+        self.screen.set_scrollback_buffer_size(chunks as usize);
     }
 
     pub fn set_blink(&mut self, on: bool) {

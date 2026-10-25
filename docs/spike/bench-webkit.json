@@ -1,0 +1,75 @@
+{
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4 Safari/605.1.15",
+  "renderer": "webgl2",
+  "glRenderer": "Apple GPU",
+  "canvas": [
+    1248,
+    936
+  ],
+  "frame": [
+    640,
+    400
+  ],
+  "full": {
+    "kind": 2,
+    "bandHeightPx": 400,
+    "writeMs": 0,
+    "engineMs": 0.3566666666666667,
+    "uploadMs": 0.026666666666666856,
+    "drawMs": 1.8666666666666667,
+    "totalMs": 2.25
+  },
+  "fullCrt": {
+    "kind": 2,
+    "bandHeightPx": 400,
+    "writeMs": 0,
+    "engineMs": 1.5033333333333334,
+    "uploadMs": 0.06,
+    "drawMs": 3.396666666666664,
+    "totalMs": 4.959999999999997
+  },
+  "oneChar": {
+    "kind": 1,
+    "bandHeightPx": 16,
+    "writeMs": 0.043333333333333335,
+    "engineMs": 0.3233333333333333,
+    "uploadMs": 0.013333333333333332,
+    "drawMs": 5.22,
+    "totalMs": 5.556666666666667
+  },
+  "oneLine": {
+    "kind": 1,
+    "bandHeightPx": 16,
+    "writeMs": 0.05333333333333334,
+    "engineMs": 0.12,
+    "uploadMs": 0.0033333333333333335,
+    "drawMs": 4.086666666666667,
+    "totalMs": 4.21
+  },
+  "scroll": {
+    "kind": 1,
+    "bandHeightPx": 400,
+    "writeMs": 0.3,
+    "engineMs": 0.5333333333333348,
+    "uploadMs": 0.05,
+    "drawMs": 2.026666666666667,
+    "totalMs": 2.6100000000000017
+  },
+  "cursorOnly": {
+    "kind": 0,
+    "bandHeightPx": 0,
+    "writeMs": 0.003333333333336365,
+    "engineMs": 0.07666666666666364,
+    "uploadMs": 0,
+    "drawMs": 2.3266666666666667,
+    "totalMs": 2.40333333333333
+  },
+  "feed": {
+    "synthMB": 2.000016,
+    "feedMBs": 15.625125,
+    "scrollFeedMBs": 1.2928661926308986,
+    "feedRenderMBs": 0.5724281625643961,
+    "framesInFeedRender": 489,
+    "artMBs": 4.361983471074381
+  }
+}
