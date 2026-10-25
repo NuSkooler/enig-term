@@ -140,3 +140,47 @@ test('panic recovery: the engine is replaced, the connection stays up', async ({
     expect(await rowText(page, 0)).toMatch(/^still alive/);
     await shot(page, 'after-panic', ti.project.name);
 });
+
+test('settings persist in localStorage; a throwing localStorage does not break the page', async ({ page }) => {
+    await open(page);
+    const root = page.locator('enig-term');
+    await root.locator('[data-act="settings"]').click();
+    await root.locator('[data-set="crt"]').check();
+    await root.locator('[data-set="scale"]').selectOption('integer');
+    expect(await page.evaluate(() => [(window as any).enigTerm.opts.crt, (window as any).enigTerm.opts.scale])).toEqual([true, 'integer']);
+    await page.reload();
+    await page.waitForFunction(() => document.body.dataset.ready === '1');
+    expect(await page.evaluate(() => [(window as any).enigTerm.opts.crt, (window as any).enigTerm.opts.scale])).toEqual([true, 'integer']);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('enig-term:settings:v1')!))).toEqual({ crt: true, scale: 'integer' });
+
+    const page2 = await page.context().newPage();
+    await page2.addInitScript(() => {
+        const boom = () => {
+            throw new DOMException('blocked', 'SecurityError');
+        };
+        Storage.prototype.getItem = boom;
+        Storage.prototype.setItem = boom;
+    });
+    await page2.goto('/?blink=0');
+    await page2.waitForFunction(() => document.body.dataset.ready === '1');
+    const r2 = page2.locator('enig-term');
+    await r2.locator('[data-act="settings"]').click();
+    await r2.locator('[data-set="crt"]').check();
+    expect(await page2.evaluate(() => (window as any).enigTerm.opts.crt)).toBe(true);
+    await expect(r2.locator('[data-toast]')).toContainText('could not be saved');
+    await page2.close();
+});
+
+test('full screen toggles (element fullscreen, or the viewport-covering fallback)', async ({ page }) => {
+    await open(page);
+    const btn = page.locator('enig-term').locator('[data-act="fullscreen"]');
+    await btn.click();
+    await expect(btn).toHaveAttribute('aria-pressed', 'true');
+    const fill = await page.evaluate(() => {
+        const t = (window as any).enigTerm;
+        return t.canvas.getBoundingClientRect().height / window.innerHeight;
+    });
+    expect(fill).toBeGreaterThan(0.75);
+    await btn.click();
+    await expect(btn).toHaveAttribute('aria-pressed', 'false');
+});
