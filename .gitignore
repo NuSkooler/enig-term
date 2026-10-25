@@ -5,3 +5,10 @@ dist/
 test-results/
 playwright-report/
 *.log
+# Local configs: never commit or ship one (see README, "config.json v1").
+config.json
+dev-config.json
+# Screenshots from test runs (checked by eye, not committed).
+test/screenshots/
+# Spike outputs that show third-party art (kept local only).
+docs/spike/*enigma*

@@ -1,37 +1,46 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig, devices, type Project } from '@playwright/test';
+import { webkitLaunch } from './scripts/webkit-deps.mjs';
 
 const PORT = Number(process.env.ENIG_TERM_PORT ?? 8090);
 
+// WebKit needs system libraries some hosts lack. webkitLaunch() finds a
+// working way to start it (as installed, through WEBKIT_EXECUTABLE, or through
+// the no-root launcher from `npm run setup:webkit`), or says why it cannot.
+// Without one the WebKit projects are left out with a loud warning, unless
+// ENIG_TERM_REQUIRE_WEBKIT=1 makes that an error.
+const wk = webkitLaunch();
+if (!wk.ok) {
+    const msg = `\n*** enig-term: SKIPPING WebKit tests: ${wk.reason}\n`;
+    if (process.env.ENIG_TERM_REQUIRE_WEBKIT === '1') throw new Error(msg);
+    console.warn(msg);
+}
+const wkLaunch = wk.ok && wk.executablePath ? { executablePath: wk.executablePath } : {};
+
+const DESKTOP = { viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 };
+const desktopSpecs = /(render|input|terminal|scrollback|embed|links|live|bench)\.spec\.ts/;
+const mobileSpecs = /mobile\.spec\.ts/;
+
+const projects: Project[] = [
+    { name: 'chromium', testMatch: desktopSpecs, use: { ...devices['Desktop Chrome'], ...DESKTOP } },
+    { name: 'firefox', testMatch: desktopSpecs, use: { ...devices['Desktop Firefox'], ...DESKTOP } },
+    { name: 'chromium-pixel7', testMatch: mobileSpecs, use: { ...devices['Pixel 7'] } },
+];
+if (wk.ok) {
+    projects.splice(1, 0, { name: 'webkit', testMatch: desktopSpecs, use: { ...devices['Desktop Safari'], ...DESKTOP, launchOptions: wkLaunch } });
+    projects.push({ name: 'webkit-iphone', testMatch: mobileSpecs, use: { ...devices['iPhone 14'], launchOptions: wkLaunch } });
+}
+
 export default defineConfig({
     testDir: 'test',
-    testMatch: /.*\.spec\.ts/,
     timeout: 60_000,
     fullyParallel: false,
     workers: 1,
     reporter: [['list']],
-    use: {
-        baseURL: `http://127.0.0.1:${PORT}/`,
-        viewport: { width: 1280, height: 900 },
-        deviceScaleFactor: 1,
-    },
+    use: { baseURL: `http://127.0.0.1:${PORT}/` },
     webServer: {
         command: `node scripts/serve.mjs ${PORT}`,
         url: `http://127.0.0.1:${PORT}/`,
         reuseExistingServer: true,
     },
-    projects: [
-        { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 } },
-        {
-            name: 'webkit',
-            use: {
-                ...devices['Desktop Safari'],
-                viewport: { width: 1280, height: 900 },
-                deviceScaleFactor: 1,
-                // Hosts missing WebKit's system libraries can point this at a
-                // launcher that supplies them (see SPIKE.md).
-                launchOptions: process.env.WEBKIT_EXECUTABLE ? { executablePath: process.env.WEBKIT_EXECUTABLE } : {},
-            },
-        },
-        { name: 'firefox', use: { ...devices['Desktop Firefox'], viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 } },
-    ],
+    projects,
 });
