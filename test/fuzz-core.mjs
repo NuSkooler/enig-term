@@ -74,6 +74,11 @@ function token(r) {
     return String.fromCharCode(...Array.from({ length: 1 + r.int(32) }, () => r.int(256)));
 }
 
+/** The tokens of the case with this seed (for tests that replay fuzz input elsewhere). */
+export function fuzzCase(seed) {
+    return makeCase(rng(seed >>> 0));
+}
+
 function makeCase(r) {
     const parts = [];
     const n = 1 + r.int(40);

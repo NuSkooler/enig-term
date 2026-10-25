@@ -89,6 +89,8 @@ pub struct CaptureScreen {
     /// Link id of the OSC 8 span currently open (0 = none). Set by the sink:
     /// icy_engine keeps its own copy private.
     pub active_link: u32,
+    /// Test hook: always let icy_engine scroll (to compare against fast_scroll).
+    pub slow_scroll: bool,
     grid: Vec<LinkTag>,
     grid_dims: (i32, i32),
     any_link: bool,
@@ -104,6 +106,7 @@ impl CaptureScreen {
             capture_on_clear: true,
             links: LinkTable::default(),
             active_link: 0,
+            slow_scroll: false,
             grid: Vec::new(),
             grid_dims: (0, 0),
             any_link: false,
@@ -238,6 +241,9 @@ impl CaptureScreen {
         if full_width {
             self.shift_grid(top, bottom, true);
         }
+        if self.fast_scroll(top, bottom, true) {
+            return;
+        }
         // icy_engine rasterises the top line into its pixel scrollback when no
         // margins are set, even with a limit of 0. Margins equal to the whole
         // screen scroll identically and skip that raster.
@@ -251,10 +257,48 @@ impl CaptureScreen {
         }
     }
 
+    /// Scroll rows `top..=bottom` by moving whole lines instead of copying
+    /// every cell (icy_engine copies cell by cell through `set_char`, about
+    /// 80 us per scrolled 80x25 screen; this is a few hundred nanoseconds).
+    /// Only for the plain case: full width, no Unicode graphemes, no sixels,
+    /// an unlocked visible layer. Returns false when the engine must do it.
+    fn fast_scroll(&mut self, top: i32, bottom: i32, up: bool) -> bool {
+        if self.slow_scroll || self.inner.unicode_width() || self.inner.terminal_state().margins_left_right().is_some() {
+            return false;
+        }
+        let w = self.inner.width();
+        let blank = AttributedChar::new(' ', self.inner.caret.attribute);
+        let cur = self.inner.current_layer;
+        let Some(layer) = self.inner.buffer.layers.get(cur) else { return false };
+        let p = &layer.properties;
+        if !layer.sixels.is_empty() || p.is_locked || !p.is_visible || p.has_alpha_channel || top < 0 || bottom < top || bottom >= layer.height() {
+            return false;
+        }
+        self.inner.end_grapheme();
+        let layer = &mut self.inner.buffer.layers[cur];
+        let (t, b) = (top as usize, bottom as usize);
+        if layer.lines.len() <= b {
+            layer.lines.resize(b + 1, Line::create(layer.size().width));
+        }
+        let mut fresh = Line::create(w);
+        fresh.chars.fill(blank);
+        if up {
+            layer.lines.remove(t);
+            layer.lines.insert(b, fresh);
+        } else {
+            layer.lines.remove(b);
+            layer.lines.insert(t, fresh);
+        }
+        true
+    }
+
     pub(crate) fn capture_scroll_down(&mut self) {
         if self.inner.terminal_state().margins_left_right().is_none() {
             let (top, bottom) = (self.inner.first_editable_line(), self.inner.last_editable_line());
             self.shift_grid(top, bottom, false);
+            if self.fast_scroll(top, bottom, false) {
+                return;
+            }
         }
         self.inner.scroll_down();
     }

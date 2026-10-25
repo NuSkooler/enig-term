@@ -488,6 +488,7 @@ impl Core {
         screen.scrollback_limit = self.screen.scrollback_limit;
         screen.capture_on_clear = self.screen.capture_on_clear;
         screen.links = std::mem::take(&mut self.screen.links);
+        screen.slow_scroll = self.screen.slow_scroll;
         screen.pushed = self.screen.pushed;
         self.screen = screen;
         self.parser = parser;
@@ -583,6 +584,11 @@ impl Core {
     /// default: the decoder has no memory bound (see `aps`).
     pub fn set_inline_images(&mut self, on: bool) {
         self.inline_images = on;
+    }
+
+    /// Test hook: scroll through icy_engine's own (cell-by-cell) path.
+    pub fn debug_slow_scroll(&mut self, on: bool) {
+        self.screen.slow_scroll = on;
     }
 
     /// Test hook: forward `CSI ? 2026 h` to icy_engine unmodified, which panics

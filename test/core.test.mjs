@@ -369,3 +369,35 @@ test('CSI ? 33 h: blink becomes a bright background (CTDA 2)', () => {
     const px = framePixels(c, memory);
     assert.deepEqual([px[0], px[1], px[2]], [0xff, 0x55, 0x55]);
 });
+
+test('fast line-moving scroll matches the engine cell-by-cell scroll (fuzzed)', async () => {
+    const { fuzzCase } = await import('./fuzz-core.mjs');
+    const fast = new Core(80, 25, 'ansi');
+    const slow = new Core(80, 25, 'ansi');
+    slow.debug_slow_scroll(true);
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+        for (let i = 0; i < 300; i++) {
+            const parts = fuzzCase(9000 + i);
+            for (const p of parts) {
+                fast.feed(bytes(p));
+                slow.feed(bytes(p));
+            }
+            fast.feed(bytes('\r\nscroll\r\n\r\n'));
+            slow.feed(bytes('\r\nscroll\r\n\r\n'));
+            assert.equal(fast.rows(), slow.rows());
+            for (let y = 0; y < fast.rows(); y++) assert.deepEqual(fast.row_cells(y), slow.row_cells(y), `case ${i} row ${y}`);
+            if (i % 30 === 0) {
+                fast.render(true);
+                const a = framePixels(fast, memory);
+                slow.render(true);
+                const b = framePixels(slow, memory);
+                assert.ok(a.length === b.length && a.every((v, k) => v === b[k]), `case ${i}: frames differ`);
+            }
+        }
+    } finally {
+        console.error = quiet;
+    }
+    assert.equal(fast.scrollback_len(), slow.scrollback_len());
+});
