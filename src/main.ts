@@ -36,6 +36,8 @@ async function readConfig(): Promise<PageConfig> {
         crt: flag('crt') ?? cfg.crt,
         sharp: flag('sharp') ?? cfg.sharp,
         blink: flag('blink') ?? cfg.blink,
+        naws: flag('naws') ?? cfg.naws,
+        debugCtermDa: q.get('debugDa') === 'cterm',
         renderer: (q.get('renderer') as 'webgl2' | '2d' | null) ?? cfg.renderer,
         cols: q.has('cols') ? Number(q.get('cols')) : cfg.cols,
         rows: q.has('rows') ? Number(q.get('rows')) : cfg.rows,

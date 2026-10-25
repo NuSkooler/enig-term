@@ -22,6 +22,10 @@ export interface EnigTermOptions {
     /** Blink the cursor and blinking text. Off for deterministic screenshots. */
     blink?: boolean;
     wasmUrl?: string;
+    /** Negotiate NAWS (default true). False is a test hook for the CSI 255 n path. */
+    naws?: boolean;
+    /** Test hook: answer DA as CTerm so ENiGMA sends its CSI = 6 n probe. */
+    debugCtermDa?: boolean;
     onStatus?: (state: string, detail?: string) => void;
 }
 
@@ -57,6 +61,8 @@ export class EnigTerm {
     private ws: WebSocket | null = null;
     private telnet: TelnetClient | null = null;
     private readonly termType: string;
+    private readonly naws: boolean;
+    private readonly debugCtermDa: boolean;
     private readonly onStatus?: (state: string, detail?: string) => void;
     private needsDraw = true;
     private raf = 0;
@@ -80,6 +86,8 @@ export class EnigTerm {
         this.blink = opts.blink ?? true;
         this.crtSettings = { ...CRT_DEFAULTS, ...opts.crtSettings };
         this.termType = opts.termType ?? 'ansi-bbs';
+        this.naws = opts.naws ?? true;
+        this.debugCtermDa = opts.debugCtermDa ?? false;
         this.onStatus = opts.onStatus;
 
         this.canvas = document.createElement('canvas');
@@ -238,7 +246,7 @@ export class EnigTerm {
 
     private onEvent(ev: CoreEvent): void {
         if (ev.t === 'req') {
-            const reply = replyFor(ev);
+            const reply = replyFor(ev, { debugCtermDa: this.debugCtermDa });
             this.log.push(`req ${JSON.stringify(ev)} -> ${reply === null ? '(none)' : JSON.stringify(reply)}`);
             if (reply !== null) this.sendRaw(fromLatin1(reply));
         } else if (ev.t === 'font') {
@@ -274,6 +282,7 @@ export class EnigTerm {
         const telnet = new TelnetClient({
             termType: this.termType,
             getSize: () => ({ cols: this.core.cols, rows: this.core.rows }),
+            naws: this.naws,
         });
         telnet.onLog = m => this.log.push(`telnet ${m}`);
         this.telnet = telnet;

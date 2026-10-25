@@ -55,12 +55,23 @@ export type CoreEvent =
 /** First slot available for DCS-loaded fonts (SyncTERM numbering). */
 const FIRST_LOADABLE_SLOT = 43;
 
+/**
+ * TEST HOOK ONLY: a CTerm-shaped DA ("CTerm" + a version) so that today's
+ * ENiGMA, which gates its CSI = 6 n probe on termClient === 'cterm', sends it.
+ * Never on by default; enabled with ?debugDa=cterm on the standalone page.
+ */
+export const DEBUG_CTERM_DA = `${CSI}=67;84;101;114;109;1;0c`;
+
+export interface ReplyOptions {
+    debugCtermDa?: boolean;
+}
+
 /** Returns the reply string for a request event, or null if none is due. */
-export function replyFor(ev: CoreEvent): string | null {
+export function replyFor(ev: CoreEvent, opts: ReplyOptions = {}): string | null {
     if (ev.t !== 'req') return null;
     switch (ev.k) {
         case 'da':
-            return daReply();
+            return opts.debugCtermDa ? DEBUG_CTERM_DA : daReply();
         case 'ctda':
             return ctdaReply();
         case 'dsr':

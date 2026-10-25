@@ -53,6 +53,8 @@ const OPTION_NAMES: Record<number, string> = {
 export interface TelnetOptions {
     termType?: string;
     getSize: () => { cols: number; rows: number };
+    /** Refuse NAWS (test hook: makes ENiGMA fall back to CSI 255 n). Default true. */
+    naws?: boolean;
 }
 
 export class TelnetClient {
@@ -74,9 +76,10 @@ export class TelnetClient {
     private readonly localOn = new Set<number>();
     private readonly localAnswered = new Set<number>();
 
-    constructor({ termType = 'ansi-bbs', getSize }: TelnetOptions) {
+    constructor({ termType = 'ansi-bbs', getSize, naws = true }: TelnetOptions) {
         this.termType = termType;
         this.getSize = getSize;
+        if (!naws) this.localOk.delete(OPT_NAWS);
     }
 
     private log(msg: string): void {
