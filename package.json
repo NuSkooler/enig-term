@@ -18,7 +18,9 @@
     "bench": "ENIG_TERM_BENCH=1 playwright test test/bench.spec.ts && node test/bench-core.mjs",
     "test:live": "playwright test --project=chromium test/live.spec.ts",
     "fixtures": "node test/fixtures/make-fixtures.mjs",
-    "setup:webkit": "node scripts/webkit-deps.mjs"
+    "setup:webkit": "node scripts/webkit-deps.mjs",
+    "fuzz": "node test/fuzz-core.mjs",
+    "goldens": "node test/goldens.mjs --write"
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",

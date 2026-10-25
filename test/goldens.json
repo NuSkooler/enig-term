@@ -1,0 +1,17 @@
+{
+  "cp437-testcard": {
+    "w": 640,
+    "h": 400,
+    "sha256": "006a41652a4ea8684502684383ce964841f100d5de76642ea74f1669feca98c1"
+  },
+  "sauce-ice-9px": {
+    "w": 720,
+    "h": 400,
+    "sha256": "f3a982313b0f8e0b1c9466d17ba513947d31de4b1d8ecf29ba48af8af0b6c1eb"
+  },
+  "amiga-topaz-latin1": {
+    "w": 640,
+    "h": 400,
+    "sha256": "1efa311c8f03ad1f7cfe09564c1a624d1d87197b5557fec2316b15bdfe6e9d01"
+  }
+}

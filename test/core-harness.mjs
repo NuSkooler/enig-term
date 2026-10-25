@@ -17,8 +17,15 @@ export function bytes(s) {
     return out;
 }
 
-export async function loadCore() {
-    const glue = await import(path.join(WASM_DIR, 'enig_term_core.js'));
+let n = 0;
+/**
+ * Load the core. `fresh` imports a separate copy of the glue (its own
+ * instance), for tests that trap the WASM on purpose.
+ */
+export async function loadCore({ fresh = false } = {}) {
+    const url = new URL('file://' + path.join(WASM_DIR, 'enig_term_core.js'));
+    if (fresh) url.search = `?n=${++n}`;
+    const glue = await import(url.href);
     const wasm = await glue.default({ module_or_path: fs.readFileSync(path.join(WASM_DIR, 'enig_term_core_bg.wasm')) });
     return { Core: glue.Core, memory: wasm.memory, glue };
 }

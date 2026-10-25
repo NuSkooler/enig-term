@@ -13,13 +13,20 @@
 //!   the events to the TypeScript shell, which owns every reply;
 //! * dirty-line partial rendering into a reusable RGBA buffer;
 //! * cursor, font and aspect getters;
-//! * runtime font loading that takes priority over the embedded font table.
+//! * runtime font loading that takes priority over the embedded font table;
+//! * cell scrollback and per-cell OSC 8 links (capture.rs), with a scrollback
+//!   view rendered through the engine.
+
+mod capture;
+mod delegate;
+
+use capture::{CaptureScreen, view_screen_from};
 
 use std::collections::HashMap;
 
 use icy_engine::{
-    AttributedChar, BitFont, EditableScreen, FontSelectionState, IceMode, Position, Rectangle, RenderOptions, ScreenMode, ScreenSink, Size,
-    TerminalEmulation,
+    AttributedChar, BitFont, EditableScreen, FontSelectionState, IceMode, Position, Rectangle, RenderOptions, Screen, ScreenMode, ScreenSink, Size,
+    TerminalEmulation, TextPane, TextScreen,
 };
 use icy_parser_core::{
     AnsiMusic, CaretShape, CommandParser, CommandSink, DecMode, DeviceControlString, ErrorLevel, IgsCommand, OperatingSystemCommand, ParseError, RipCommand,
@@ -34,19 +41,35 @@ extern "C" {
     fn console_error(s: &str);
 }
 
+/// The last panic message. wasm32 panics abort (a trap), so the shell reads
+/// this from the dead instance before it replaces it.
+static LAST_PANIC: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 fn install_panic_hook() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         std::panic::set_hook(Box::new(|info| {
-            console_error(&format!("enig-term-core panic: {info}"));
+            let msg = format!("{info}");
+            if let Ok(mut last) = LAST_PANIC.try_lock() {
+                last.clear();
+                last.push_str(&msg);
+            }
+            console_error(&format!("enig-term-core panic: {msg}"));
         }));
     });
 }
 
-/// icy_engine's default keeps 2000 RGBA chunks (a 640x16 line is 40 KB; a full
-/// clear is the whole 1 MB frame), i.e. up to gigabytes. The shell does not use
-/// the engine's scrollback yet, so keep none by default.
-const DEFAULT_SCROLLBACK_CHUNKS: usize = 0;
+/// Message of the last panic in this instance ("" if none).
+#[wasm_bindgen]
+pub fn last_panic() -> String {
+    LAST_PANIC.try_lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+
+/// icy_engine's own scrollback keeps RGBA chunks (a 640x16 line is 40 KB; a full
+/// clear is the whole 1 MB frame), up to gigabytes. We keep cells instead
+/// (capture.rs), so the engine keeps none.
+const ENGINE_SCROLLBACK_CHUNKS: usize = 0;
 
 /// Highest SyncTERM font number with a built-in table entry in icy_engine.
 const LAST_BUILTIN_FONT: usize = 42;
@@ -60,11 +83,50 @@ struct CoreSink<'a> {
     passthrough_sync: bool,
     /// Set for changes that alter pixels without touching cells (palette, fonts, images).
     needs_full: &'a mut bool,
+    inline_images: bool,
+}
+
+/// First CTerm font slot open to `DCS CTerm:Font` (reported as pF in `CSI = 1 n`).
+const FIRST_LOADABLE_SLOT: usize = 43;
+
+/// What icy_engine's renderer can draw: glyph rows are at most 8 bits wide and
+/// a glyph holds at most 32 rows.
+fn font_is_drawable(f: &BitFont) -> bool {
+    (1..=8).contains(&f.width) && (1..=32).contains(&f.height)
 }
 
 impl CoreSink<'_> {
     fn screen(&mut self) -> &mut dyn EditableScreen {
         self.inner.screen_mut()
+    }
+
+    /// Repeat counts beyond the screen size do nothing more on screen, but
+    /// icy_engine loops over them: `CSI 65535 S` takes seconds.
+    fn clamp_counts(&self, cmd: TerminalCommand) -> TerminalCommand {
+        let s = self.inner.screen();
+        let rows = s.height().clamp(1, u16::MAX as i32) as u16;
+        let cols = s.width().clamp(1, u16::MAX as i32) as u16;
+        use icy_parser_core::Direction;
+        match cmd {
+            TerminalCommand::CsiScroll(d @ (Direction::Up | Direction::Down), n) => TerminalCommand::CsiScroll(d, n.min(rows)),
+            TerminalCommand::CsiScroll(d, n) => TerminalCommand::CsiScroll(d, n.min(cols)),
+            TerminalCommand::CsiInsertCharacter(n) => TerminalCommand::CsiInsertCharacter(n.min(cols)),
+            TerminalCommand::CsiDeleteCharacter(n) => TerminalCommand::CsiDeleteCharacter(n.min(cols)),
+            TerminalCommand::CsiEraseCharacter(n) => TerminalCommand::CsiEraseCharacter(n.min(cols)),
+            TerminalCommand::CsiInsertLine(n) => TerminalCommand::CsiInsertLine(n.min(rows)),
+            TerminalCommand::CsiDeleteLine(n) => TerminalCommand::CsiDeleteLine(n.min(rows)),
+            other => other,
+        }
+    }
+
+    fn sanitize_margins(&mut self) {
+        if let Some(cap) = self.capture() {
+            cap.sanitize_margins();
+        }
+    }
+
+    fn capture(&mut self) -> Option<&mut CaptureScreen> {
+        self.inner.screen_mut().as_any_mut().downcast_mut::<CaptureScreen>()
     }
 
     /// Same bookkeeping icy_engine's private `set_font_selection_success` does.
@@ -143,6 +205,7 @@ impl CommandSink for CoreSink<'_> {
     }
 
     fn emit(&mut self, cmd: TerminalCommand) {
+        let cmd = self.clamp_counts(cmd);
         match cmd {
             TerminalCommand::CsiFontSelection { slot, font_number } => {
                 let nr = font_number as usize;
@@ -170,7 +233,10 @@ impl CommandSink for CoreSink<'_> {
             TerminalCommand::Bell => {
                 self.events.push(json!({"t": "bell"}));
             }
-            _ => self.inner.emit(cmd),
+            _ => {
+                self.inner.emit(cmd);
+                self.sanitize_margins();
+            }
         }
     }
 
@@ -189,28 +255,58 @@ impl CommandSink for CoreSink<'_> {
 
     fn device_control(&mut self, dcs: DeviceControlString) {
         if let DeviceControlString::LoadFont(slot, data) = &dcs {
-            self.events.push(json!({"t": "fontload", "slot": slot, "bytes": data.len()}));
+            // Only CTerm's loadable slots, and only fonts the renderer can draw:
+            // icy_engine takes any slot (0 replaces the font that sets the cell
+            // size) and any size (a 0-high or 33+-high font panics the renderer).
+            let ok = (FIRST_LOADABLE_SLOT..=255).contains(slot) && BitFont::from_bytes(String::new(), data).is_ok_and(|f| font_is_drawable(&f));
+            self.events.push(json!({"t": "fontload", "slot": slot, "bytes": data.len(), "ok": ok}));
+            if !ok {
+                return;
+            }
         }
         *self.needs_full = true;
         self.inner.device_control(dcs);
     }
 
     fn operating_system_command(&mut self, osc: OperatingSystemCommand) {
+        let mut link: Option<u32> = None;
         match &osc {
-            OperatingSystemCommand::Hyperlink { uri, .. } if !uri.is_empty() => {
-                self.events.push(json!({"t": "link", "uri": String::from_utf8_lossy(uri)}));
+            OperatingSystemCommand::Hyperlink { params, uri } => {
+                // Mirror icy_engine's rule: both parts must be UTF-8; an empty URI closes.
+                if let (Ok(_), Ok(u)) = (std::str::from_utf8(params), std::str::from_utf8(uri)) {
+                    if u.is_empty() {
+                        link = Some(0);
+                    } else {
+                        self.events.push(json!({"t": "link", "uri": u}));
+                        link = Some(u32::MAX); // intern below, once the screen is reachable
+                    }
+                }
+            }
+            OperatingSystemCommand::SetTitle(t) | OperatingSystemCommand::SetWindowTitle(t) => {
+                self.events.push(json!({"t": "title", "text": String::from_utf8_lossy(t)}));
             }
             OperatingSystemCommand::SetPaletteColor(..) | OperatingSystemCommand::ResetPaletteColors(_) => *self.needs_full = true,
             _ => {}
         }
+        let uri = if let OperatingSystemCommand::Hyperlink { uri, .. } = &osc { Some(String::from_utf8_lossy(uri).into_owned()) } else { None };
         self.inner.operating_system_command(osc);
+        if let Some(id) = link {
+            if let Some(cap) = self.capture() {
+                cap.active_link = if id == 0 { 0 } else { cap.links.intern(uri.as_deref().unwrap_or("")) };
+            }
+        }
     }
 
     fn aps(&mut self, data: &[u8]) {
         // CTerm audio and other APC strings: the shell owns audio.
-        self.events.push(json!({"t": "apc", "data": String::from_utf8_lossy(data)}));
-        *self.needs_full = true; // may be an inline image
-        self.inner.aps(data);
+        self.events.push(json!({"t": "apc", "data": String::from_utf8_lossy(&data[..data.len().min(4096)])}));
+        // Inline images (SyncTERM DrawJXLBlob/DrawPPMBlob) are decoded in full
+        // before icy_engine's size check, so a small file declaring a huge
+        // image exhausts WASM memory. Off unless the shell enables them.
+        if self.inline_images {
+            *self.needs_full = true;
+            self.inner.aps(data);
+        }
     }
 
     fn play_music(&mut self, music: AnsiMusic) {
@@ -257,9 +353,27 @@ fn emulation_from(name: &str) -> TerminalEmulation {
     }
 }
 
+/// A fresh terminal screen and parser, the screen wrapped for capture.
+fn create(cols: u32, rows: u32, emulation: TerminalEmulation) -> (Box<CaptureScreen>, Box<dyn CommandParser + Send>) {
+    let (mut screen, parser) = ScreenMode::Vga(cols as i32, rows as i32).create_screen(emulation, None);
+    screen.terminal_state_mut().is_terminal_buffer = true;
+    screen.set_scrollback_buffer_size(ENGINE_SCROLLBACK_CHUNKS);
+    // Every text emulation the shell offers is a TextScreen; take it out of the box.
+    let text = match screen.as_any_mut().downcast_mut::<TextScreen>() {
+        Some(t) => std::mem::take(t),
+        None => TextScreen::new(Size::new(cols as i32, rows as i32)),
+    };
+    (Box::new(CaptureScreen::new(text)), parser)
+}
+
+/// Packed cell for the shell: bits 0-15 glyph code, 16-23 font slot, bit 24 = has a link.
+fn pack_cell(c: &AttributedChar, link: u32) -> u32 {
+    (c.ch as u32 & 0xffff) | ((c.attribute.font_page() as u32) << 16) | if link != 0 { 1 << 24 } else { 0 }
+}
+
 #[wasm_bindgen]
 pub struct Core {
-    screen: Box<dyn EditableScreen>,
+    screen: Box<CaptureScreen>,
     parser: Box<dyn CommandParser + Send>,
     emulation: TerminalEmulation,
     events: Vec<Value>,
@@ -282,7 +396,11 @@ pub struct Core {
     snapshot: Vec<AttributedChar>,
     snapshot_dims: (i32, i32),
     ice_rendered: bool,
-    scrollback_limit: usize,
+
+    /// Lines scrolled back from live (0 = live view).
+    view_offset: usize,
+    view_dirty: bool,
+    inline_images: bool,
 }
 
 #[wasm_bindgen]
@@ -292,9 +410,8 @@ impl Core {
     pub fn new(cols: u32, rows: u32, emulation: &str) -> Core {
         install_panic_hook();
         let emulation = emulation_from(emulation);
-        let (mut screen, parser) = ScreenMode::Vga(cols as i32, rows as i32).create_screen(emulation, None);
-        screen.terminal_state_mut().is_terminal_buffer = true;
-        let mut core = Core {
+        let (screen, parser) = create(cols, rows, emulation);
+        Core {
             screen,
             parser,
             emulation,
@@ -314,14 +431,15 @@ impl Core {
             snapshot: Vec::new(),
             snapshot_dims: (0, 0),
             ice_rendered: false,
-            scrollback_limit: DEFAULT_SCROLLBACK_CHUNKS,
-        };
-        core.screen.set_scrollback_buffer_size(DEFAULT_SCROLLBACK_CHUNKS);
-        core
+            view_offset: 0,
+            view_dirty: false,
+            inline_images: false,
+        }
     }
 
     /// Feed host bytes (after Telnet de-framing). Returns the number of queued events.
     pub fn feed(&mut self, bytes: &[u8]) -> u32 {
+        let pushed = self.screen.pushed;
         let mut sink = CoreSink {
             inner: ScreenSink::new(&mut *self.screen),
             events: &mut self.events,
@@ -329,16 +447,22 @@ impl Core {
             sync_output: &mut self.sync_output,
             passthrough_sync: self.passthrough_sync,
             needs_full: &mut self.force_full,
+            inline_images: self.inline_images,
         };
         self.parser.parse(bytes, &mut sink);
+        let added = (self.screen.pushed - pushed) as usize;
+        if self.view_offset > 0 && added > 0 {
+            // Keep a scrolled-back view on the same lines while output scrolls.
+            self.view_offset = (self.view_offset + added).min(self.screen.scrollback.len());
+            self.view_dirty = true;
+        }
         self.events.len() as u32
     }
 
     /// JSON array of events since the last call: host requests (`t:"req"`),
-    /// font switches, bell, OSC 8 links, APC strings, ANSI music.
+    /// font switches, bell, OSC 8 links, titles, APC strings, ANSI music.
     pub fn take_events(&mut self) -> String {
-        let out = Value::Array(std::mem::take(&mut self.events)).to_string();
-        out
+        Value::Array(std::mem::take(&mut self.events)).to_string()
     }
 
     pub fn resize(&mut self, cols: u32, rows: u32) {
@@ -348,28 +472,103 @@ impl Core {
         let p = self.screen.caret_position();
         let clamped = icy_engine::Position::new(p.x.min(cols as i32 - 1), p.y.min(rows as i32 - 1));
         self.screen.caret_mut().set_position(clamped);
+        self.screen.sanitize_margins();
         self.screen.mark_dirty();
+        self.view_offset = 0;
         self.force_full = true;
     }
 
-    /// Reset to a fresh terminal of the same size and emulation (also drops runtime fonts' selection).
+    /// Reset to a fresh terminal of the same size and emulation. Scrollback
+    /// and its limit are kept (they are the session's history), and so are
+    /// runtime-loaded fonts (they apply on the next selection).
     pub fn reset(&mut self) {
         let (c, r) = (self.cols(), self.rows());
-        let (mut screen, parser) = ScreenMode::Vga(c as i32, r as i32).create_screen(self.emulation, None);
-        screen.terminal_state_mut().is_terminal_buffer = true;
-        screen.set_scrollback_buffer_size(self.scrollback_limit);
+        let (mut screen, parser) = create(c, r, self.emulation);
+        screen.scrollback = std::mem::take(&mut self.screen.scrollback);
+        screen.scrollback_limit = self.screen.scrollback_limit;
+        screen.capture_on_clear = self.screen.capture_on_clear;
+        screen.links = std::mem::take(&mut self.screen.links);
+        screen.pushed = self.screen.pushed;
         self.screen = screen;
         self.parser = parser;
+        self.sync_output = false;
+        self.view_offset = 0;
         self.force_full = true;
     }
 
-    /// icy_engine keeps scrollback as RGBA chunks: one per scrolled line
-    /// (cols*8 x 16 px) and one per full-screen clear (the whole frame). The
-    /// default cap is 2000 *chunks*. 0 keeps none, but each scroll or clear is
-    /// still rasterised before being dropped (engine behaviour).
-    pub fn set_scrollback_limit(&mut self, chunks: u32) {
-        self.scrollback_limit = chunks as usize;
-        self.screen.set_scrollback_buffer_size(chunks as usize);
+    // --- scrollback -----------------------------------------------------------
+
+    /// Maximum scrollback lines (cells, not pixels). 0 keeps none.
+    pub fn set_scrollback_lines(&mut self, lines: u32) {
+        self.screen.set_scrollback_limit(lines as usize);
+        self.view_offset = self.view_offset.min(self.screen.scrollback.len());
+        self.view_dirty = true;
+    }
+    /// Lines currently held.
+    pub fn scrollback_len(&self) -> u32 {
+        self.screen.scrollback.len() as u32
+    }
+    /// Also keep the screen's non-blank lines when it is cleared (default on).
+    pub fn set_capture_on_clear(&mut self, on: bool) {
+        self.screen.capture_on_clear = on;
+    }
+    pub fn clear_scrollback(&mut self) {
+        self.screen.scrollback.clear();
+        self.set_view_offset(0);
+    }
+    /// Show the screen `lines` lines back from live (0 = live). Returns the
+    /// offset actually set (clamped to the scrollback held).
+    pub fn set_view_offset(&mut self, lines: u32) -> u32 {
+        let n = (lines as usize).min(self.screen.scrollback.len());
+        if n != self.view_offset {
+            if n == 0 {
+                self.force_full = true;
+            }
+            self.view_offset = n;
+            self.view_dirty = true;
+        }
+        n as u32
+    }
+    pub fn view_offset(&self) -> u32 {
+        self.view_offset as u32
+    }
+    /// Lines that ever left the screen (also counting those not kept), so the
+    /// shell can tell that the content under a selection has moved.
+    pub fn lines_pushed(&self) -> f64 {
+        self.screen.pushed as f64
+    }
+
+    // --- cells, for selection, copy and links ------------------------------------
+
+    /// The displayed row `y` (view-aware) as packed cells (see `pack_cell`).
+    pub fn row_cells(&self, y: u32) -> Vec<u32> {
+        let cols = self.screen.width().max(0) as usize;
+        let mut out = Vec::with_capacity(cols);
+        match self.view_row(y as usize) {
+            ViewRow::Back(i) => {
+                let line = &self.screen.scrollback[i];
+                for x in 0..cols {
+                    let c = line.cells.get(x).copied().unwrap_or_default();
+                    out.push(pack_cell(&c, line.links.get(x).copied().unwrap_or(0)));
+                }
+            }
+            ViewRow::Live(r) => {
+                for x in 0..cols as i32 {
+                    let c = self.screen.char_at(Position::new(x, r as i32));
+                    out.push(pack_cell(&c, self.screen.live_link(x, r as i32)));
+                }
+            }
+        }
+        out
+    }
+
+    /// OSC 8 target of the displayed cell (view-aware), or "" when none.
+    pub fn link_at(&self, x: u32, y: u32) -> String {
+        let id = match self.view_row(y as usize) {
+            ViewRow::Back(i) => self.screen.scrollback[i].links.get(x as usize).copied().unwrap_or(0),
+            ViewRow::Live(r) => self.screen.live_link(x as i32, r as i32),
+        };
+        self.screen.links.get(id).unwrap_or_default().to_string()
     }
 
     pub fn set_blink(&mut self, on: bool) {
@@ -380,7 +579,14 @@ impl Core {
         self.force_full = true;
     }
 
-    /// Only for the spike's API-fit test: forward `CSI ? 2026 h` to icy_engine unmodified.
+    /// Allow SyncTERM inline images (APC DrawJXLBlob/DrawPPMBlob). Off by
+    /// default: the decoder has no memory bound (see `aps`).
+    pub fn set_inline_images(&mut self, on: bool) {
+        self.inline_images = on;
+    }
+
+    /// Test hook: forward `CSI ? 2026 h` to icy_engine unmodified, which panics
+    /// on wasm32 (`Instant::now`). Used to exercise panic recovery.
     pub fn debug_passthrough_sync(&mut self, on: bool) {
         self.passthrough_sync = on;
     }
@@ -406,17 +612,24 @@ impl Core {
         };
         let whole = Rectangle::from(0, 0, cols, rows);
 
+        if self.view_offset > 0 {
+            let live_changed = engine_dirty.is_some() || self.diff_rows(cols, rows).is_some();
+            if !(full || self.force_full || self.view_dirty || live_changed || dims_changed || blink_changed || ice_changed) {
+                return 0;
+            }
+            let view = self.compose_view();
+            let (size, px) = view.render_to_rgba_raw(&opts(whole, self.blink_on));
+            self.set_full_frame(size, px, ice, rows);
+            self.view_dirty = false;
+            // The live cells were "seen"; diff from here when the view returns to live.
+            self.take_snapshot(cols, rows, None);
+            return 2;
+        }
+
         if full || self.force_full || dims_changed || blink_changed || ice_changed {
             let (size, px) = self.screen.render_to_rgba_raw(&opts(whole, self.blink_on));
-            self.frame = px;
-            self.frame_w = size.width as u32;
-            self.frame_h = size.height as u32;
-            self.region_y = 0;
-            self.region_h = self.frame_h;
+            self.set_full_frame(size, px, ice, rows);
             self.force_full = false;
-            self.rendered_blink = self.blink_on;
-            self.ice_rendered = ice;
-            self.last_rendered_rows = (0, rows as u32);
             self.take_snapshot(cols, rows, None);
             return 2;
         }
@@ -443,9 +656,9 @@ impl Core {
         1
     }
 
-    /// Microseconds-cheap check for whether anything needs drawing (cells or forced).
+    /// Cheap check for whether anything needs drawing (cells or forced).
     pub fn has_changes(&self) -> bool {
-        if self.force_full || self.blink_on != self.rendered_blink || self.screen.get_dirty_lines().is_some() {
+        if self.force_full || self.view_dirty || self.blink_on != self.rendered_blink || self.screen.get_dirty_lines().is_some() {
             return true;
         }
         let (cols, rows) = (self.screen.width().max(1), self.screen.height().max(1));
@@ -537,12 +750,19 @@ impl Core {
     pub fn sync_output(&self) -> bool {
         self.sync_output
     }
+    /// CTerm Last Column Flag mode (`CSI = 4 h`), for the `CSI = 4 n` report.
+    pub fn last_column_flag(&self) -> bool {
+        self.screen.terminal_state().last_column_flag_mode
+    }
 
     /// Load a bitmap font (PSF1/PSF2 or raw 8xN, as icy_engine's `BitFont::from_bytes`
     /// accepts) into `slot`. It takes priority over the embedded table for
     /// `CSI Ps1 ; slot SP D`. If `slot` is the active page it applies at once.
     pub fn load_font(&mut self, slot: u32, name: &str, data: &[u8]) -> Result<String, JsError> {
         let font = BitFont::from_bytes(name.to_string(), data).map_err(|e| JsError::new(&format!("{e}")))?;
+        if !font_is_drawable(&font) {
+            return Err(JsError::new(&format!("font size {}x{} is not drawable (max 8x32)", font.width, font.height)));
+        }
         let info = format!("{}x{}", font.width, font.height);
         self.fonts.insert(slot as usize, font.clone());
         if slot == 0 || self.screen.font(slot as usize).is_some() {
@@ -598,7 +818,7 @@ impl Core {
                 "group": s.group().to_string(),
             })
         });
-        let mut screen: Box<dyn EditableScreen> = Box::new(doc.screen);
+        let mut screen = Box::new(CaptureScreen::new(doc.screen));
         screen.caret_mut().visible = false;
         self.screen = screen;
         self.force_full = true;
@@ -615,7 +835,55 @@ impl Core {
     }
 }
 
+enum ViewRow {
+    /// Index into the scrollback.
+    Back(usize),
+    /// Row of the live screen.
+    Live(usize),
+}
+
 impl Core {
+    /// Which line the displayed row `y` shows, given the view offset.
+    fn view_row(&self, y: usize) -> ViewRow {
+        let back = self.screen.scrollback.len();
+        let idx = back - self.view_offset.min(back) + y;
+        if idx < back { ViewRow::Back(idx) } else { ViewRow::Live(idx - back) }
+    }
+
+    /// A copy of the live screen (same fonts, palette and modes) holding the
+    /// rows the view shows, so the engine renders them pixel-identically.
+    fn compose_view(&self) -> TextScreen {
+        let live = &self.screen.inner;
+        let mut v = view_screen_from(live);
+        let (cols, rows) = (live.width(), live.height());
+        let layer = v.current_layer;
+        v.buffer.layers[layer].sixels.clear();
+        for y in 0..rows {
+            let row: Vec<AttributedChar> = match self.view_row(y as usize) {
+                ViewRow::Back(i) => {
+                    let cells = &self.screen.scrollback[i].cells;
+                    (0..cols as usize).map(|x| cells.get(x).copied().unwrap_or_default()).collect()
+                }
+                ViewRow::Live(r) => (0..cols).map(|x| live.char_at(Position::new(x, r as i32))).collect(),
+            };
+            for (x, c) in row.into_iter().enumerate() {
+                v.set_char(Position::new(x as i32, y), c);
+            }
+        }
+        v
+    }
+
+    fn set_full_frame(&mut self, size: Size, px: Vec<u8>, ice: bool, rows: i32) {
+        self.frame = px;
+        self.frame_w = size.width as u32;
+        self.frame_h = size.height as u32;
+        self.region_y = 0;
+        self.region_h = self.frame_h;
+        self.rendered_blink = self.blink_on;
+        self.ice_rendered = ice;
+        self.last_rendered_rows = (0, rows as u32);
+    }
+
     fn diff_rows(&self, cols: i32, rows: i32) -> Option<(i32, i32)> {
         if self.snapshot_dims != (cols, rows) {
             return Some((0, rows));
