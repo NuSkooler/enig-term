@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A foreign page</title>
+<style>
+  /* Deliberately hostile page CSS: none of it may reach the terminal, and
+     none of the terminal's CSS may reach the page. */
+  * { font-family: "Comic Sans MS", cursive !important; letter-spacing: 3px; }
+  canvas { display: none !important; filter: blur(4px); }
+  button { background: rgb(255, 0, 255) !important; padding: 30px; }
+  textarea, input { width: 500px; height: 200px; }
+  dialog { display: block; }
+  body { margin: 40px; background: rgb(240, 240, 200); color: rgb(10, 20, 30); }
+  .terms { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+</style>
+</head>
+<body>
+  <h1>Not a terminal site</h1>
+  <button id="pagebutton">A page button</button>
+  <div class="terms">
+    <enig-term id="el" endpoint="wss://elsewhere.example/" crt aspect="off" keybar="off" persist="off" blink="off"></enig-term>
+    <div id="locked"></div>
+  </div>
+  <script type="module">
+    // The bundle is loaded from the path ENiGMA serves it under: the WASM must
+    // resolve relative to the script, not to this page.
+    import EnigTerm from '/_enig/ws-term/enig-term.js';
+    window.handles = [];
+    const el = document.getElementById('el');
+    el.ready.then(h => window.handles[0] = h);
+    window.events = [];
+    for (const n of ['state', 'title', 'bell', 'link']) el.addEventListener(n, e => window.events.push([n, e.detail?.state ?? e.detail?.title ?? e.detail?.url ?? '']));
+    const h2 = await EnigTerm.mount(document.getElementById('locked'), {
+      config: '/fixtures/config-locked.json', urlParams: true, persist: false, blink: false,
+    });
+    await el.ready;
+    window.handles[1] = h2;
+  </script>
+</body>
+</html>

@@ -32,6 +32,8 @@ uniform vec2 u_src;          // frame size in source pixels
 uniform vec2 u_dst;          // drawn size in device pixels
 uniform float u_sharp;       // 1 = sharp-bilinear, 0 = plain bilinear
 uniform vec4 u_cursor;       // x, y, w, h in source pixels; w <= 0 hides it
+uniform vec4 u_sel;          // selection x0, y0, x1, y1 in cells (x1 inclusive); x0 < 0 = none
+uniform vec2 u_cell;         // cell size in source pixels
 uniform float u_time;
 
 uniform float u_crt;         // master switch for everything below
@@ -153,20 +155,29 @@ vec3 monitor(vec3 color) {
 }
 // --- end of ported functions ---------------------------------------------
 
-vec3 with_cursor(vec3 color, vec2 uv) {
-    if (u_cursor.z <= 0.0) return color;
-    vec2 p = uv * u_src;
-    if (p.x >= u_cursor.x && p.x < u_cursor.x + u_cursor.z && p.y >= u_cursor.y && p.y < u_cursor.y + u_cursor.w) {
-        return vec3(1.0) - color;
-    }
-    return color;
+bool selected(vec2 p) {
+    if (u_sel.x < 0.0) return false;
+    vec2 c = floor(p / u_cell);
+    if (c.y < u_sel.y || c.y > u_sel.w) return false;
+    if (u_sel.y == u_sel.w) return c.x >= u_sel.x && c.x <= u_sel.z;
+    if (c.y == u_sel.y) return c.x >= u_sel.x;
+    if (c.y == u_sel.w) return c.x <= u_sel.z;
+    return true;
+}
+
+// Cursor and selection both invert; over each other they cancel, as on a PC.
+vec3 with_overlays(vec3 color, vec2 uv) {
+    vec2 p = floor(uv * u_src);
+    bool inv = selected(p);
+    if (u_cursor.z > 0.0 && p.x >= u_cursor.x && p.x < u_cursor.x + u_cursor.z && p.y >= u_cursor.y && p.y < u_cursor.y + u_cursor.w) inv = !inv;
+    return inv ? vec3(1.0) - color : color;
 }
 
 void main() {
     vec2 uv = v_uv;
     if (u_crt < 0.5) {
         vec4 t = sample_frame(uv);
-        o_color = vec4(with_cursor(t.rgb, uv), 1.0);
+        o_color = vec4(with_overlays(t.rgb, uv), 1.0);
         return;
     }
     uv = apply_curvature(apply_sync_wobble(uv));
@@ -174,7 +185,7 @@ void main() {
         o_color = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
-    vec3 color = adjust_color(with_cursor(sample_frame(uv).rgb, uv));
+    vec3 color = adjust_color(with_overlays(sample_frame(uv).rgb, uv));
     vec3 bloom = apply_bloom(uv);
     color = apply_scanlines(color, uv);
     color = apply_noise(color, uv);

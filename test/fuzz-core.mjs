@@ -92,6 +92,8 @@ export async function fuzz({ seconds = 30, seed = Date.now() & 0xffffffff, cases
     let core = new mod.Core(80, 25, 'ansi');
     core.set_scrollback_lines?.(200);
     const end = Date.now() + seconds * 1000;
+    // FUZZ_TRACE_CASE=n logs per-token feed times of case n (to pin down a slow case).
+    const traceCase = process.env.FUZZ_TRACE_CASE ? Number(process.env.FUZZ_TRACE_CASE) : -1;
     let done = 0;
     const quiet = console.error;
     console.error = () => {};
@@ -105,7 +107,9 @@ export async function fuzz({ seconds = 30, seed = Date.now() & 0xffffffff, cases
             try {
                 for (const p of parts) {
                     step = 'feed';
+                    const tf = Date.now();
                     core.feed(bytes(p));
+                    if (traceCase === done) log(`trace case ${done}: ${Date.now() - tf} ms feed ${JSON.stringify(p).slice(0, 300)}`);
                     core.take_events();
                     const k = r.int(100);
                     if (k < 25) {

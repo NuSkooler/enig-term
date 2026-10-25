@@ -1,0 +1,286 @@
+// config.json (schema v1), option precedence and persisted user settings.
+//
+// Precedence, lowest first:
+//   1. built-in defaults                         (DEFAULTS)
+//   2. config.json                               (operator; ENiGMA generates it)
+//   3. element attributes / EnigTerm.mount() options (the embedding page)
+//   4. URL parameters                            (standalone page only)
+//   5. user settings in localStorage             (only keys in USER_KEYS, and
+//                                                 never a key the config locks)
+// `lockEndpoint` additionally stops levels 4 and 5 (and the host input) from
+// changing the endpoint.
+
+import { DEFAULT_LINK_SCHEMES } from './links.ts';
+
+export type Profile = 'pc' | 'amiga';
+export type KeyBarMode = 'auto' | 'on' | 'off';
+export type ScaleMode = 'fit' | 'integer';
+
+/** Everything the terminal reads. config.json uses the same key names. */
+export interface Options {
+    /** Schema version of config.json. */
+    version: number;
+    /** wss:// URL of the board (ws:// only for loopback hosts or with allowInsecure). null: ask. */
+    endpoint: string | null;
+    /** Shown in the page title and the toolbar. */
+    title: string;
+    /** The user cannot change the endpoint (host input read-only, URL parameter ignored). */
+    lockEndpoint: boolean;
+    /** Connect as soon as the page loads, if there is an endpoint. */
+    autoConnect: boolean;
+    cols: number;
+    rows: number;
+    /** Font/aspect profile. Phase 1 implements "pc"; "amiga" is reserved. */
+    profile: Profile;
+    /** 4:3 aspect correction. */
+    aspect: boolean;
+    /** CRT effect. */
+    crt: boolean;
+    /** Scale to fit the width, or only by whole multiples. */
+    scale: ScaleMode;
+    /** Sharp-bilinear (true) or plain bilinear sampling. */
+    sharp: boolean;
+    /** On-screen key bar: auto = shown on touch (coarse pointer) devices. */
+    keyBar: KeyBarMode;
+    /** Scrollback lines kept (cells). 0 disables scrollback. */
+    scrollback: number;
+    /** Keep the screen in scrollback when the host clears it. */
+    scrollbackOnClear: boolean;
+    /** Reconnect with backoff after an unexpected close. */
+    autoReconnect: boolean;
+    /** Text and cursor blink (off only for tests/screenshots). */
+    blink: boolean;
+    /** Backspace sends ^H ("bs", DOS/SyncTERM) or DEL ("del"). */
+    backspace: 'bs' | 'del';
+    /** Allowed OSC 8 link schemes. */
+    linkSchemes: string[];
+    /** Allow ws:// to hosts other than loopback (development only). */
+    allowInsecure: boolean;
+    /** TTYPE answer. */
+    termType: string;
+    /** Renderer: webgl2 (default) or 2d. */
+    renderer: 'webgl2' | '2d';
+    /** Setting names the user may not change (on top of lockEndpoint). */
+    lock: string[];
+    /** Read URL parameters (standalone page). */
+    urlParams: boolean;
+    /** Remember user settings in localStorage. */
+    persist: boolean;
+    /** Show the toolbar (host input, connect, settings). */
+    toolbar: boolean;
+}
+
+export const DEFAULTS: Readonly<Options> = Object.freeze({
+    version: 1,
+    endpoint: null,
+    title: 'enig-term',
+    lockEndpoint: false,
+    autoConnect: false,
+    cols: 80,
+    rows: 25,
+    profile: 'pc',
+    aspect: true,
+    crt: false,
+    scale: 'fit',
+    sharp: true,
+    keyBar: 'auto',
+    scrollback: 2000,
+    scrollbackOnClear: true,
+    autoReconnect: false,
+    blink: true,
+    backspace: 'bs',
+    linkSchemes: [...DEFAULT_LINK_SCHEMES],
+    allowInsecure: false,
+    termType: 'ansi-bbs',
+    renderer: 'webgl2',
+    lock: [],
+    urlParams: false,
+    persist: true,
+    toolbar: true,
+}) as Options;
+
+/** Settings a user can change from the UI (and that are persisted). */
+export const USER_KEYS = ['aspect', 'crt', 'scale', 'keyBar', 'autoReconnect', 'backspace', 'sharp'] as const;
+export type UserKey = (typeof USER_KEYS)[number];
+export type UserSettings = Partial<Pick<Options, UserKey>>;
+
+const BOOL_KEYS = ['lockEndpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'scrollbackOnClear', 'autoReconnect', 'blink', 'allowInsecure', 'urlParams', 'persist', 'toolbar'] as const;
+
+/**
+ * Validate a partial options object (config.json, attributes, JS options):
+ * keep known keys with valid values, drop the rest with a warning. Unknown
+ * keys are ignored silently (operators may pass extras through).
+ */
+export function sanitize(src: Record<string, unknown> | null | undefined, warn: (m: string) => void = () => {}): Partial<Options> {
+    const out: Partial<Options> = {};
+    if (!src || typeof src !== 'object') return out;
+    const o = out as Record<string, unknown>;
+    const bad = (k: string) => warn(`enig-term: ignoring invalid ${k}: ${JSON.stringify(src[k])}`);
+    for (const k of BOOL_KEYS) {
+        if (!(k in src)) continue;
+        const v = src[k];
+        if (typeof v === 'boolean') o[k] = v;
+        else if (v === 'true' || v === '1' || v === '' || v === 'on') o[k] = true;
+        else if (v === 'false' || v === '0' || v === 'off') o[k] = false;
+        else bad(k);
+    }
+    if ('version' in src) {
+        const v = Number(src.version);
+        if (Number.isInteger(v) && v >= 1) {
+            o.version = v;
+            if (v > 1) warn(`enig-term: config version ${v} is newer than this build understands (1); reading the keys it knows`);
+        } else bad('version');
+    }
+    if ('endpoint' in src) {
+        const v = src.endpoint;
+        if (v === null || v === '') o.endpoint = null;
+        else if (typeof v === 'string') o.endpoint = v.trim();
+        else bad('endpoint');
+    }
+    for (const k of ['title', 'termType'] as const) {
+        if (!(k in src)) continue;
+        if (typeof src[k] === 'string') o[k] = String(src[k]).slice(0, 200);
+        else bad(k);
+    }
+    for (const [k, lo, hi] of [
+        ['cols', 20, 255],
+        ['rows', 10, 255],
+        ['scrollback', 0, 100000],
+    ] as const) {
+        if (!(k in src)) continue;
+        const v = Number(src[k]);
+        if (Number.isInteger(v) && v >= lo && v <= hi) o[k] = v;
+        else bad(k);
+    }
+    const oneOf = <K extends keyof Options>(k: K, values: readonly string[]) => {
+        if (!(k in src)) return;
+        const v = src[k];
+        if (typeof v === 'string' && values.includes(v)) o[k] = v;
+        else if (k === 'keyBar' && typeof v === 'boolean') o[k] = v ? 'on' : 'off';
+        else bad(k);
+    };
+    oneOf('profile', ['pc', 'amiga']);
+    oneOf('keyBar', ['auto', 'on', 'off']);
+    oneOf('scale', ['fit', 'integer']);
+    oneOf('backspace', ['bs', 'del']);
+    oneOf('renderer', ['webgl2', '2d']);
+    for (const k of ['linkSchemes', 'lock'] as const) {
+        if (!(k in src)) continue;
+        const v = src[k];
+        const list = typeof v === 'string' ? v.split(/[\s,]+/).filter(Boolean) : v;
+        if (Array.isArray(list) && list.every(x => typeof x === 'string')) o[k] = list as string[];
+        else bad(k);
+    }
+    return out;
+}
+
+/** Map URL parameters (standalone page) to options. Test hooks are returned separately. */
+export function fromUrlParams(q: URLSearchParams): { opts: Record<string, unknown>; hooks: Record<string, string> } {
+    const opts: Record<string, unknown> = {};
+    const map: Record<string, string> = { connect: 'autoConnect', keys: 'keyBar' };
+    for (const [k, v] of q) {
+        const key = map[k] ?? k;
+        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect'].includes(key)) opts[key] = v;
+    }
+    const hooks: Record<string, string> = {};
+    for (const k of ['naws', 'debugDa', 'debugPanic']) {
+        const v = q.get(k);
+        if (v !== null) hooks[k] = v;
+    }
+    return { opts, hooks };
+}
+
+/** Apply the precedence rules. `url` is only used when the merged options allow it. */
+export function resolve(layers: {
+    config?: Partial<Options>;
+    page?: Partial<Options>;
+    url?: Partial<Options>;
+    user?: UserSettings;
+}): Options {
+    const merged: Options = { ...DEFAULTS, linkSchemes: [...DEFAULTS.linkSchemes], lock: [] };
+    Object.assign(merged, layers.config ?? {}, layers.page ?? {});
+    const locked = new Set(merged.lock);
+    if (merged.urlParams && layers.url) {
+        const url = { ...layers.url };
+        if (merged.lockEndpoint) delete url.endpoint;
+        // URL parameters may not unlock anything or change locked settings.
+        delete url.lock;
+        delete url.lockEndpoint;
+        delete url.urlParams;
+        delete url.allowInsecure;
+        delete url.linkSchemes;
+        for (const k of locked) delete (url as Record<string, unknown>)[k];
+        Object.assign(merged, url);
+    }
+    for (const k of USER_KEYS) {
+        const v = layers.user?.[k];
+        if (v !== undefined && !locked.has(k)) (merged as unknown as Record<string, unknown>)[k] = v;
+    }
+    return merged;
+}
+
+/** Is this setting one the user may change? */
+export function userMayChange(opts: Options, key: string): boolean {
+    if (key === 'endpoint') return !opts.lockEndpoint;
+    return (USER_KEYS as readonly string[]).includes(key) && !opts.lock.includes(key);
+}
+
+// --- persisted user settings ------------------------------------------------
+
+const STORE_KEY = 'enig-term:settings:v1';
+
+/** Read saved settings. Every storage access is guarded: it can throw (privacy modes, sandboxed frames). */
+export function loadUserSettings(): UserSettings {
+    try {
+        const raw = globalThis.localStorage?.getItem(STORE_KEY);
+        if (!raw) return {};
+        const parsed = sanitize(JSON.parse(raw));
+        const out: UserSettings = {};
+        for (const k of USER_KEYS) if (parsed[k] !== undefined) (out as Record<string, unknown>)[k] = parsed[k];
+        return out;
+    } catch {
+        return {};
+    }
+}
+
+export function saveUserSettings(s: UserSettings): boolean {
+    try {
+        globalThis.localStorage?.setItem(STORE_KEY, JSON.stringify(s));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+// --- endpoints ----------------------------------------------------------------
+
+const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[::1\]|::1)$/i;
+
+export interface EndpointCheck {
+    ok: boolean;
+    url: string;
+    reason?: string;
+}
+
+/**
+ * Normalise what the user typed ("bbs.example.com:8443", "wss://...") and
+ * enforce wss://. ws:// is accepted only for loopback hosts, or anywhere when
+ * `allowInsecure` is set (development).
+ */
+export function checkEndpoint(input: string, allowInsecure = false): EndpointCheck {
+    let s = input.trim();
+    if (!s) return { ok: false, url: s, reason: 'no host given' };
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'wss://' + s;
+    let u: URL;
+    try {
+        u = new URL(s);
+    } catch {
+        return { ok: false, url: s, reason: 'not a valid address' };
+    }
+    if (u.protocol === 'wss:') return { ok: true, url: u.href };
+    if (u.protocol === 'ws:') {
+        if (LOOPBACK.test(u.hostname) || allowInsecure) return { ok: true, url: u.href };
+        return { ok: false, url: u.href, reason: 'only secure (wss://) connections are allowed' };
+    }
+    return { ok: false, url: u.href, reason: `${u.protocol} is not a WebSocket address` };
+}

@@ -1,13 +1,17 @@
 // Output pass: takes the engine's RGBA frame and draws it into the canvas at
 // the requested rectangle (device pixels). WebGL2 is the main path; a 2D
 // canvas fallback covers browsers or devices without it.
-import { CRT_DEFAULTS, FRAG, MONITOR_TINTS, VERT, type CrtSettings } from './crt.js';
+import { CRT_DEFAULTS, FRAG, MONITOR_TINTS, VERT, type CrtSettings } from './crt.ts';
 
 export interface DrawParams {
     /** Target rectangle inside the canvas, device pixels, origin top-left. */
     rect: { x: number; y: number; w: number; h: number };
     /** Cursor in source pixels, or null when hidden / in its off phase. */
     cursor: { x: number; y: number; w: number; h: number } | null;
+    /** Selected cells (x1 inclusive), or null. */
+    selection: { x0: number; y0: number; x1: number; y1: number } | null;
+    /** Cell size in source pixels. */
+    cell: { w: number; h: number };
     sharp: boolean;
     crt: boolean;
     crtSettings: CrtSettings;
@@ -96,6 +100,9 @@ class GlRenderer implements Renderer {
         gl.uniform1f(u.u_sharp, p.sharp ? 1 : 0);
         const c = p.cursor;
         gl.uniform4f(u.u_cursor, c?.x ?? 0, c?.y ?? 0, c?.w ?? 0, c?.h ?? 0);
+        const sel = p.selection;
+        gl.uniform4f(u.u_sel, sel ? sel.x0 : -1, sel?.y0 ?? 0, sel?.x1 ?? 0, sel?.y1 ?? 0);
+        gl.uniform2f(u.u_cell, p.cell.w, p.cell.h);
         gl.uniform1f(u.u_time, p.timeSec);
         gl.uniform1f(u.u_crt, p.crt ? 1 : 0);
         // Mapping from icy's MonitorSettings to shader units (icy shader.rs).
@@ -174,14 +181,22 @@ class Canvas2dRenderer implements Renderer {
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(this.frame, p.rect.x, p.rect.y, p.rect.w, p.rect.h);
-        if (p.cursor) {
-            const sx = p.rect.w / this.frame.width;
-            const sy = p.rect.h / this.frame.height;
-            ctx.globalCompositeOperation = 'difference';
-            ctx.fillStyle = '#fff';
-            ctx.fillRect(p.rect.x + p.cursor.x * sx, p.rect.y + p.cursor.y * sy, p.cursor.w * sx, p.cursor.h * sy);
-            ctx.globalCompositeOperation = 'source-over';
+        const sx = p.rect.w / this.frame.width;
+        const sy = p.rect.h / this.frame.height;
+        ctx.globalCompositeOperation = 'difference';
+        ctx.fillStyle = '#fff';
+        const box = (x: number, y: number, w: number, h: number) => ctx.fillRect(p.rect.x + x * sx, p.rect.y + y * sy, w * sx, h * sy);
+        const s = p.selection;
+        if (s) {
+            const cols = Math.round(this.frame.width / p.cell.w);
+            for (let y = s.y0; y <= s.y1; y++) {
+                const a = y === s.y0 ? s.x0 : 0;
+                const b = y === s.y1 ? s.x1 : cols - 1;
+                if (b >= a) box(a * p.cell.w, y * p.cell.h, (b - a + 1) * p.cell.w, p.cell.h);
+            }
         }
+        if (p.cursor) box(p.cursor.x, p.cursor.y, p.cursor.w, p.cursor.h);
+        ctx.globalCompositeOperation = 'source-over';
     }
 
     finish(): void {}

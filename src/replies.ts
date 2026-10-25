@@ -1,40 +1,51 @@
 // Replies to host queries. The WASM core reports each request (with the state
 // captured at the moment it was parsed); the shell decides what to answer.
 //
-// References: CTerm manual (syncterm.net/cterm.html; local copy
-// ansi-bbs-utils/docs/reference/cterm.txt), bansi.txt for CSI 255 n.
+// References: the CTerm manual (https://syncterm.bbsdev.net/cterm.html, read
+// 2026-10-25), bansi.txt for CSI 255 n.
 
 export const ESC = String.fromCharCode(0x1b);
 export const CSI = ESC + '[';
 
-export const VERSION = { major: 0, minor: 1, patch: 0 };
+declare const __ENIG_TERM_VERSION__: string | undefined;
+
+export interface Version {
+    major: number;
+    minor: number;
+    patch: number;
+}
+
+export function parseVersion(v: string): Version {
+    const [major, minor, patch] = v.split(/[.-]/).map(n => parseInt(n, 10) || 0);
+    return { major: major ?? 0, minor: minor ?? 0, patch: patch ?? 0 };
+}
+
+/** package.json's version, injected by the bundler (scripts/build-js.mjs). */
+export const VERSION_STRING: string = typeof __ENIG_TERM_VERSION__ === 'string' ? __ENIG_TERM_VERSION__ : '0.0.0';
+export const VERSION = parseVersion(VERSION_STRING);
 
 /** "enig-term" as decimal ASCII, CTerm-shaped: CSI = 101;110;...;maj;min;patch c */
-export function daReply(): string {
+export function daReply(v: Version = VERSION): string {
     const name = Array.from('enig-term', c => c.charCodeAt(0)).join(';');
-    return `${CSI}=${name};${VERSION.major};${VERSION.minor};${VERSION.patch}c`;
+    return `${CSI}=${name};${v.major};${v.minor};${v.patch}c`;
 }
 
 /**
- * CTerm Device Attributes (CTDA, CSI < c). Only features verified in this
- * build are listed (numbering per the local cterm.txt):
- *   1 - loadable fonts via DCS          (verified: test/core.test.mjs "dcs font")
- *   2 - palette changes via OSC         (verified: "osc palette")
- *   4 - font select via CSI Ps1;Ps2 SP D (verified: "font select")
- * Not claimed: 3 pixel ops (engine has sixel, untested here), 5/6 extended
- * palette, 7 mouse (no mouse reporting in the shell yet).
+ * CTerm Device Attributes (CTDA, CSI < c), numbered as in the current CTerm
+ * manual (Table 4). Only what this build does and the tests verify:
+ *   1 - loadable fonts via DCS             (core.test.mjs "dcs font")
+ *   2 - bright background, CSI ? 33 h      (render tests: iCE testcard, SAUCE iCE)
+ *   3 - palette changes via OSC            (core.test.mjs "osc palette")
+ *   5 - font select via CSI Ps1 ; Ps2 SP D (core.test.mjs "font select 42")
+ * Not claimed: 4 pixel operations (sixel and PPM are in the engine but inline
+ * images are off, see the core's set_inline_images), 6 extended palette, 7
+ * mouse, 8 key press/release reports.
+ * (The spike claimed 1;2;4 from an older cterm.txt with different numbering.)
  */
-export const CTDA_FEATURES = [1, 2, 4];
+export const CTDA_FEATURES = [1, 2, 3, 5];
 export function ctdaReply(): string {
     return `${CSI}<0;${CTDA_FEATURES.join(';')}c`;
 }
-
-/** CTerm state/mode capability answers for `CSI = Ps n` outside 1..3. */
-export const CTERM_CAPS: Record<number, number> = {
-    // 6 = OSC 8 hyperlinks: icy_engine parses OSC 8 (text stays clean, link
-    // is recorded and underlined). Clicking is not in the spike.
-    6: 1,
-};
 
 export type CoreEvent =
     | { t: 'req'; k: 'da' | 'da2' | 'ctda' | 'dsr' }
@@ -46,9 +57,10 @@ export type CoreEvent =
     | { t: 'req'; k: 'ctsmrr'; n: number }
     | { t: 'req'; k: 'other'; dbg: string }
     | { t: 'font'; slot: number; font: number; ok: boolean }
-    | { t: 'fontload'; slot: number; bytes: number }
+    | { t: 'fontload'; slot: number; bytes: number; ok: boolean }
     | { t: 'bell' }
     | { t: 'link'; uri: string }
+    | { t: 'title'; text: string }
     | { t: 'apc'; data: string }
     | { t: 'music'; actions: number };
 
@@ -56,22 +68,26 @@ export type CoreEvent =
 const FIRST_LOADABLE_SLOT = 43;
 
 /**
- * TEST HOOK ONLY: a CTerm-shaped DA ("CTerm" + a version) so that today's
- * ENiGMA, which gates its CSI = 6 n probe on termClient === 'cterm', sends it.
- * Never on by default; enabled with ?debugDa=cterm on the standalone page.
+ * TEST HOOK ONLY: a CTerm-shaped DA ("CTerm" + a version) for ENiGMA builds
+ * that gate their CSI = 6 n probe on termClient === 'cterm'. Never on by
+ * default; enabled with ?debugDa=cterm on the standalone page.
  */
 export const DEBUG_CTERM_DA = `${CSI}=67;84;101;114;109;1;0c`;
 
-export interface ReplyOptions {
+export interface ReplyState {
     debugCtermDa?: boolean;
+    /** OSC 8 links can be followed (the `CSI = 6 n` answer). */
+    links?: boolean;
+    /** CTerm Last Column Flag mode, for `CSI = 4 n`. */
+    lastColumnFlag?: boolean;
 }
 
 /** Returns the reply string for a request event, or null if none is due. */
-export function replyFor(ev: CoreEvent, opts: ReplyOptions = {}): string | null {
+export function replyFor(ev: CoreEvent, st: ReplyState = {}): string | null {
     if (ev.t !== 'req') return null;
     switch (ev.k) {
         case 'da':
-            return opts.debugCtermDa ? DEBUG_CTERM_DA : daReply();
+            return st.debugCtermDa ? DEBUG_CTERM_DA : daReply();
         case 'ctda':
             return ctdaReply();
         case 'dsr':
@@ -85,13 +101,23 @@ export function replyFor(ev: CoreEvent, opts: ReplyOptions = {}): string | null 
             // CSI = 1 ; pF ; pR ; pS0 ; pS1 ; pS2 ; pS3 n
             return `${CSI}=1;${FIRST_LOADABLE_SLOT};${ev.result};${ev.slots.join(';')}n`;
         case 'fontmode':
+            // "If no modes are currently set, an empty parameter will be included."
             return ev.modes.length ? `${CSI}=2;${ev.modes.join(';')}n` : `${CSI}=2;n`;
         case 'fontdim':
             return `${CSI}=3;${ev.h};${ev.w}n`;
-        case 'ctsmrr': {
-            const v = CTERM_CAPS[ev.n];
-            return `${CSI}=${ev.n};${v ?? 0}n`;
-        }
+        case 'ctsmrr':
+            switch (ev.n) {
+                case 4: // LCF enabled
+                    return `${CSI}=4;${st.lastColumnFlag ? 1 : 0}n`;
+                case 5: // LCF forced: never
+                    return `${CSI}=5;0n`;
+                case 6: // OSC 8 hyperlinks
+                    return `${CSI}=6;${st.links ? 1 : 0}n`;
+                default:
+                    // 7 is CTerm audio (not in this build); others are unknown.
+                    // A terminal that lacks a report sends nothing.
+                    return null;
+            }
         default:
             return null;
     }

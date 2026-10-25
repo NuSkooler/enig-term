@@ -77,9 +77,9 @@ test('bench', async ({ page }, ti) => {
         const oneLine = tot(await phases(i => t.write(enc(`${ESC}[${(i % 24) + 1};1H${'x'.repeat(80)}`)), false));
         const scroll = tot(await phases(i => t.write(enc(`${ESC}[25;1Hline ${i}\r\n`)), false));
         const cursorOnly = tot(await phases(i => t.write(enc(`${ESC}[${(i % 24) + 1};${(i % 79) + 1}H`)), false));
-        t.setCrt(true);
+        t.set('crt', true);
         const fullCrt = tot(await phases(() => {}, true));
-        t.setCrt(false);
+        t.set('crt', false);
         const frame = (full: boolean) => {
             const res = t.core.render(full);
             if (res.kind && res.pixels) t.renderer.upload(res.pixels, res.frameW, res.frameH, res.y, res.h);

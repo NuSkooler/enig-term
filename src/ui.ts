@@ -1,0 +1,426 @@
+// The chrome around the screen, inside a shadow root: toolbar (host input,
+// connect, copy/paste, settings, full screen), the settings panel, the
+// on-screen key bar, notices and the link confirmation.
+import { saveUserSettings, userMayChange, USER_KEYS, type KeyBarMode, type Options, type UserSettings } from './config.ts';
+import { STYLES } from './styles.ts';
+import type { ConnState, Terminal } from './terminal.ts';
+
+const html = String.raw;
+
+const TEMPLATE = html`
+<div class="root" part="root">
+  <div class="toolbar" part="toolbar">
+    <span class="title" data-title></span>
+    <input class="host" data-host type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="wss://bbs.example.com:8443" aria-label="Host">
+    <button type="button" data-act="connect">Connect</button>
+    <span class="status" data-status data-state="idle" role="status" aria-live="polite">Not connected</span>
+    <span class="spacer"></span>
+    <button type="button" data-act="copy" title="Copy the selection (Ctrl+Shift+C)" disabled>Copy</button>
+    <button type="button" data-act="paste" title="Paste (Ctrl+V)">Paste</button>
+    <button type="button" data-act="settings" aria-expanded="false" aria-controls="et-settings">Settings</button>
+    <button type="button" data-act="fullscreen" aria-pressed="false" title="Full screen">Full screen</button>
+  </div>
+  <div class="settings" id="et-settings" data-settings hidden>
+    <label><input type="checkbox" data-set="crt"> CRT effect</label>
+    <label><input type="checkbox" data-set="aspect"> 4:3 aspect</label>
+    <label>Scale <select data-set="scale"><option value="fit">Fit</option><option value="integer">Whole multiples</option></select></label>
+    <label>Key bar <select data-set="keyBar"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
+    <label><input type="checkbox" data-set="autoReconnect"> Reconnect automatically</label>
+    <label>Backspace sends <select data-set="backspace"><option value="bs">^H</option><option value="del">DEL</option></select></label>
+  </div>
+  <div class="stage" data-stage>
+    <div class="term" data-term></div>
+    <div class="scrollmark" data-scrollmark hidden><span data-scrolltext></span><button type="button" data-act="live">Live</button></div>
+    <div class="toast" data-toast hidden role="status" aria-live="polite"><span data-toasttext></span><button type="button" data-act="toast-close" aria-label="Dismiss">&times;</button></div>
+  </div>
+  <div class="keybar" data-keybar hidden part="keybar">
+    <div class="row">
+      <button type="button" tabindex="-1" data-key="Escape">Esc</button>
+      <button type="button" tabindex="-1" data-key="Tab">Tab</button>
+      <button type="button" tabindex="-1" data-mod="ctrl" aria-pressed="false">Ctrl</button>
+      <button type="button" tabindex="-1" data-key="ArrowLeft" aria-label="Left">&larr;</button>
+      <button type="button" tabindex="-1" data-key="ArrowUp" aria-label="Up">&uarr;</button>
+      <button type="button" tabindex="-1" data-key="ArrowDown" aria-label="Down">&darr;</button>
+      <button type="button" tabindex="-1" data-key="ArrowRight" aria-label="Right">&rarr;</button>
+      <button type="button" tabindex="-1" data-fn aria-pressed="false">Fn</button>
+    </div>
+    <div class="row">
+      <button type="button" tabindex="-1" data-key="Home">Home</button>
+      <button type="button" tabindex="-1" data-key="End">End</button>
+      <button type="button" tabindex="-1" data-key="PageUp">PgUp</button>
+      <button type="button" tabindex="-1" data-key="PageDown">PgDn</button>
+      <button type="button" tabindex="-1" data-key="Insert">Ins</button>
+      <button type="button" tabindex="-1" data-key="Delete">Del</button>
+      <button type="button" tabindex="-1" data-mod="alt" aria-pressed="false">Alt</button>
+    </div>
+    <div class="row" data-fnrow hidden>
+      ${Array.from({ length: 12 }, (_, i) => `<button type="button" tabindex="-1" data-key="F${i + 1}">F${i + 1}</button>`).join('')}
+    </div>
+  </div>
+  <dialog data-linkdialog aria-labelledby="et-link-h">
+    <h2 id="et-link-h">Open this link?</h2>
+    <code class="url" data-linkurl></code>
+    <p class="why" data-linkwhy hidden></p>
+    <div class="actions"><button type="button" data-act="link-cancel">Cancel</button><button type="button" class="primary" data-act="link-open">Open link</button></div>
+  </dialog>
+</div>`;
+
+const STATE_TEXT: Record<ConnState, string> = {
+    idle: 'Not connected',
+    connecting: 'Connecting…',
+    connected: 'Connected',
+    closed: 'Disconnected',
+    error: 'Error',
+};
+
+export class Chrome {
+    readonly root: HTMLElement;
+    readonly term: HTMLElement;
+    private q<T extends Element = HTMLElement>(sel: string): T {
+        return this.shadow.querySelector<T>(sel)!;
+    }
+    private keyBarShown = false;
+    private toastTimer = 0;
+    private pendingLink = '';
+    private coarse = window.matchMedia?.('(pointer: coarse)');
+    private disposers: (() => void)[] = [];
+    terminal: Terminal | null = null;
+    /** Endpoint the host input should start with. */
+    onConnectRequest: ((endpoint: string) => void) | null = null;
+
+    constructor(
+        private readonly host: HTMLElement,
+        private readonly shadow: ShadowRoot,
+        private opts: Options,
+        private user: UserSettings,
+        fill: boolean,
+    ) {
+        const style = document.createElement('style');
+        style.textContent = STYLES;
+        shadow.replaceChildren(style);
+        const tpl = document.createElement('template');
+        tpl.innerHTML = TEMPLATE;
+        shadow.appendChild(tpl.content);
+        this.root = this.q('.root');
+        this.term = this.q('[data-term]');
+        if (fill) this.term.dataset.fit = 'both';
+    }
+
+    /** Wire the chrome to a created terminal. */
+    attach(t: Terminal): void {
+        this.terminal = t;
+        const o = this.opts;
+        this.q<HTMLElement>('.toolbar').hidden = !o.toolbar;
+        this.q('[data-title]').textContent = o.title;
+        const hostIn = this.q<HTMLInputElement>('[data-host]');
+        hostIn.value = o.endpoint ?? '';
+        hostIn.readOnly = o.lockEndpoint;
+        if (o.lockEndpoint) hostIn.title = 'Set by the board';
+        hostIn.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.connectFromInput();
+            }
+        });
+
+        this.on('[data-act="connect"]', 'click', () => {
+            if (t.state === 'connected' || t.state === 'connecting') t.disconnect();
+            else this.connectFromInput();
+        });
+        this.on('[data-act="copy"]', 'click', () => void t.copySelection());
+        this.on('[data-act="paste"]', 'click', () => void t.pasteFromClipboard());
+        this.on('[data-act="live"]', 'click', () => {
+            t.scroll.toLive();
+            t.input.focus();
+        });
+        this.on('[data-act="toast-close"]', 'click', () => this.hideToast());
+        this.on('[data-act="settings"]', 'click', e => {
+            const panel = this.q('[data-settings]');
+            panel.hidden = !panel.hidden;
+            (e.currentTarget as HTMLElement).setAttribute('aria-expanded', String(!panel.hidden));
+        });
+        this.on('[data-act="fullscreen"]', 'click', () => void this.toggleFullscreen());
+        const fsChange = () => {
+            const on = this.fullscreenElement() === this.host;
+            if (!on && this.root.classList.contains('pseudo-fs')) return;
+            this.q('[data-act="fullscreen"]').setAttribute('aria-pressed', String(on));
+            t.setFullscreen(on);
+        };
+        document.addEventListener('fullscreenchange', fsChange);
+        document.addEventListener('webkitfullscreenchange', fsChange);
+        this.disposers.push(() => {
+            document.removeEventListener('fullscreenchange', fsChange);
+            document.removeEventListener('webkitfullscreenchange', fsChange);
+        });
+
+        this.bindSettings();
+        this.bindKeyBar();
+
+        t.events.on('state', ev => this.showState(ev.state, ev.detail, ev.reconnectInMs));
+        t.events.on('notice', ev => this.toast(ev.text, ev.level));
+        t.events.on('bell', () => {
+            const s = this.q('[data-stage]');
+            s.classList.remove('bell');
+            void s.offsetWidth;
+            s.classList.add('bell');
+        });
+        t.events.on('scroll', ev => {
+            const m = this.q('[data-scrollmark]');
+            m.hidden = ev.offset === 0;
+            this.q('[data-scrolltext]').textContent = `${ev.offset} of ${ev.lines} lines back · any key returns`;
+        });
+        t.events.on('selection', ev => {
+            this.q<HTMLButtonElement>('[data-act="copy"]').disabled = !ev.text;
+        });
+        t.onLinkRequest = (href, allowed, reason) => this.confirmLink(href, allowed, reason);
+        this.on('[data-act="link-cancel"]', 'click', () => this.closeLink());
+        this.on('[data-act="link-open"]', 'click', () => {
+            const href = this.pendingLink;
+            this.closeLink();
+            if (href) t.openLink(href);
+        });
+        this.showState(t.state, '');
+    }
+
+    private on(sel: string, type: string, fn: (e: Event) => void): void {
+        this.q(sel).addEventListener(type, fn);
+    }
+
+    private connectFromInput(): void {
+        const t = this.terminal!;
+        const v = this.q<HTMLInputElement>('[data-host]').value.trim();
+        const target = this.opts.lockEndpoint ? this.opts.endpoint : v || this.opts.endpoint;
+        if (!target) {
+            this.toast('Enter the address of a board to connect to.', 'info');
+            this.q<HTMLInputElement>('[data-host]').focus();
+            return;
+        }
+        t.connect(target);
+    }
+
+    showState(state: ConnState, detail: string, reconnectInMs?: number): void {
+        const el = this.q('[data-status]');
+        el.dataset.state = state;
+        let text = STATE_TEXT[state];
+        if (state === 'error' && detail) text = `Error: ${detail}`;
+        else if (state === 'closed' && reconnectInMs !== undefined) text = `${detail}; reconnecting in ${Math.ceil(reconnectInMs / 1000)}s`;
+        else if (state === 'closed' && detail && detail !== 'disconnected') text = `Disconnected: ${detail}`;
+        el.textContent = text;
+        const btn = this.q('[data-act="connect"]');
+        btn.textContent = state === 'connected' || state === 'connecting' ? 'Disconnect' : state === 'closed' || state === 'error' ? 'Reconnect' : 'Connect';
+        const ep = this.terminal?.currentEndpoint;
+        if (ep && !this.opts.lockEndpoint && state === 'connecting') this.q<HTMLInputElement>('[data-host]').value = ep;
+    }
+
+    toast(text: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+        const el = this.q('[data-toast]');
+        el.dataset.level = level;
+        this.q('[data-toasttext]').textContent = text;
+        el.hidden = false;
+        clearTimeout(this.toastTimer);
+        this.toastTimer = window.setTimeout(() => this.hideToast(), level === 'info' ? 2500 : level === 'warn' ? 8000 : 15000);
+    }
+
+    private hideToast(): void {
+        this.q('[data-toast]').hidden = true;
+    }
+
+    // --- links ---------------------------------------------------------------------
+
+    confirmLink(href: string, allowed: boolean, reason?: string): void {
+        const d = this.q<HTMLDialogElement>('[data-linkdialog]');
+        this.q('[data-linkurl]').textContent = href;
+        const why = this.q('[data-linkwhy]');
+        why.hidden = allowed;
+        why.textContent = allowed ? '' : `This link cannot be opened: ${reason ?? 'not allowed'}.`;
+        this.q<HTMLButtonElement>('[data-act="link-open"]').hidden = !allowed;
+        this.pendingLink = allowed ? href : '';
+        try {
+            d.showModal();
+        } catch {
+            d.setAttribute('open', '');
+        }
+        (allowed ? this.q<HTMLButtonElement>('[data-act="link-open"]') : this.q<HTMLButtonElement>('[data-act="link-cancel"]')).focus();
+    }
+
+    private closeLink(): void {
+        const d = this.q<HTMLDialogElement>('[data-linkdialog]');
+        this.pendingLink = '';
+        try {
+            d.close();
+        } catch {
+            d.removeAttribute('open');
+        }
+        this.terminal?.input.focus();
+    }
+
+    // --- settings --------------------------------------------------------------------
+
+    private bindSettings(): void {
+        const t = this.terminal!;
+        for (const el of this.shadow.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-set]')) {
+            const key = el.dataset.set as keyof Options;
+            const may = userMayChange(this.opts, key);
+            el.disabled = !may;
+            if (!may) el.title = 'Set by the board';
+            const val = this.opts[key];
+            if (el instanceof HTMLInputElement) el.checked = !!val;
+            else el.value = String(val);
+            el.addEventListener('change', () => {
+                const v = el instanceof HTMLInputElement ? el.checked : el.value;
+                this.setOption(key, v as never, true);
+            });
+        }
+        void t;
+    }
+
+    /** Reflect an option in the settings panel without applying it. */
+    syncSetting(key: string, value: unknown): void {
+        const el = this.shadow.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-set="${key}"]`);
+        if (!el) return;
+        if (el instanceof HTMLInputElement) el.checked = !!value;
+        else el.value = String(value);
+    }
+
+    /** Apply a setting (from the UI or the API); `fromUser` also persists it. */
+    setOption<K extends keyof Options>(key: K, value: Options[K], fromUser = false): void {
+        const t = this.terminal!;
+        if (fromUser && !userMayChange(this.opts, key)) return;
+        this.opts[key] = value;
+        if (key === 'keyBar') this.updateKeyBar();
+        else if (key === 'toolbar') this.q<HTMLElement>('.toolbar').hidden = !value;
+        else if (key === 'title') this.q('[data-title]').textContent = String(value);
+        else if (key === 'endpoint') {
+            if (!this.opts.lockEndpoint || !fromUser) this.q<HTMLInputElement>('[data-host]').value = String(value ?? '');
+        } else t.set(key, value);
+        const el = this.shadow.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-set="${key}"]`);
+        if (el) {
+            if (el instanceof HTMLInputElement) el.checked = !!value;
+            else el.value = String(value);
+        }
+        if (fromUser && this.opts.persist && (USER_KEYS as readonly string[]).includes(key)) {
+            (this.user as Record<string, unknown>)[key] = value;
+            if (!saveUserSettings(this.user)) this.toast('Settings could not be saved in this browser.', 'info');
+        }
+    }
+
+    // --- full screen -----------------------------------------------------------------
+
+    private fullscreenElement(): Element | null {
+        const d = document as Document & { webkitFullscreenElement?: Element };
+        return d.fullscreenElement ?? d.webkitFullscreenElement ?? null;
+    }
+
+    async toggleFullscreen(): Promise<void> {
+        const t = this.terminal!;
+        const btn = this.q('[data-act="fullscreen"]');
+        if (this.root.classList.contains('pseudo-fs')) {
+            this.root.classList.remove('pseudo-fs');
+            btn.setAttribute('aria-pressed', 'false');
+            t.setFullscreen(false);
+            return;
+        }
+        if (this.fullscreenElement()) {
+            const d = document as Document & { webkitExitFullscreen?: () => void };
+            if (document.exitFullscreen) await document.exitFullscreen().catch(() => {});
+            else d.webkitExitFullscreen?.();
+            return;
+        }
+        const h = this.host as HTMLElement & { webkitRequestFullscreen?: () => void };
+        try {
+            if (h.requestFullscreen) await h.requestFullscreen({ navigationUI: 'hide' });
+            else if (h.webkitRequestFullscreen) h.webkitRequestFullscreen();
+            else throw new Error('no fullscreen API');
+        } catch {
+            // iPhone Safari has no element fullscreen: cover the viewport instead.
+            this.root.classList.add('pseudo-fs');
+            btn.setAttribute('aria-pressed', 'true');
+            t.setFullscreen(true);
+        }
+        t.input.focus();
+    }
+
+    // --- key bar -----------------------------------------------------------------------
+
+    private bindKeyBar(): void {
+        const t = this.terminal!;
+        const bar = this.q('[data-keybar]');
+        bar.addEventListener('pointerdown', ev => {
+            const b = (ev.target as HTMLElement).closest<HTMLElement>('button');
+            if (!b) return;
+            ev.preventDefault(); // keep focus (and the soft keyboard) on the terminal
+            if (b.dataset.mod) {
+                const mod = b.dataset.mod as 'ctrl' | 'alt';
+                t.input.setSticky(mod, !t.input.sticky[mod]);
+            } else if (b.hasAttribute('data-fn')) {
+                const row = this.q('[data-fnrow]');
+                row.hidden = !row.hidden;
+                b.setAttribute('aria-pressed', String(!row.hidden));
+                this.placeKeyBar();
+            } else if (b.dataset.key) {
+                t.scroll.toLive();
+                t.input.pressKey(b.dataset.key);
+            }
+            t.input.focus();
+        });
+        // A click without a preceding pointerdown (keyboard users, assistive tech).
+        bar.addEventListener('click', ev => {
+            if ((ev as PointerEvent).pointerType) return;
+            const b = (ev.target as HTMLElement).closest<HTMLElement>('button[data-key]');
+            if (b?.dataset.key) t.input.pressKey(b.dataset.key);
+        });
+        t.input.onStickyChange = () => {
+            for (const b of bar.querySelectorAll<HTMLElement>('[data-mod]')) b.setAttribute('aria-pressed', String(t.input.sticky[b.dataset.mod as 'ctrl' | 'alt']));
+        };
+        const vv = window.visualViewport;
+        const place = () => this.placeKeyBar();
+        vv?.addEventListener('resize', place);
+        vv?.addEventListener('scroll', place);
+        window.addEventListener('resize', place);
+        this.coarse?.addEventListener?.('change', () => this.updateKeyBar());
+        this.disposers.push(() => {
+            vv?.removeEventListener('resize', place);
+            vv?.removeEventListener('scroll', place);
+            window.removeEventListener('resize', place);
+        });
+        this.updateKeyBar();
+    }
+
+    get keyBarVisible(): boolean {
+        return this.keyBarShown;
+    }
+
+    updateKeyBar(): void {
+        const mode: KeyBarMode = this.opts.keyBar;
+        const show = mode === 'on' || (mode === 'auto' && !!this.coarse?.matches);
+        this.keyBarShown = show;
+        this.q('[data-keybar]').hidden = !show;
+        this.placeKeyBar();
+    }
+
+    /**
+     * Keep the key bar on the bottom edge of the *visual* viewport, so it sits
+     * just above the soft keyboard. iOS does not shrink the layout viewport
+     * when the keyboard opens, so `bottom: 0` alone would hide it behind.
+     */
+    placeKeyBar(): void {
+        const bar = this.q('[data-keybar]');
+        if (bar.hidden) {
+            this.root.style.paddingBottom = '';
+            return;
+        }
+        const vv = window.visualViewport;
+        const h = bar.offsetHeight;
+        const top = vv ? vv.offsetTop + vv.height - h : window.innerHeight - h;
+        bar.style.top = `${Math.max(0, Math.round(top))}px`;
+        bar.style.left = vv ? `${Math.round(vv.offsetLeft)}px` : '0';
+        bar.style.width = vv ? `${Math.round(vv.width)}px` : '100%';
+        // Room below the screen so the bar never covers its last rows.
+        this.root.style.paddingBottom = `${h}px`;
+    }
+
+    destroy(): void {
+        for (const d of this.disposers) d();
+        clearTimeout(this.toastTimer);
+    }
+}

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "endpoint": "wss://bbs.example.com:8443",
+  "title": "Example BBS",
+  "lockEndpoint": false,
+  "autoConnect": false,
+  "cols": 80,
+  "rows": 25,
+  "profile": "pc",
+  "aspect": true,
+  "crt": false,
+  "scale": "fit",
+  "keyBar": "auto",
+  "scrollback": 2000,
+  "autoReconnect": false
+}

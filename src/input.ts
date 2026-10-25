@@ -1,72 +1,59 @@
-// Keyboard input: a hidden textarea collects text (IME, dead keys, predictive
-// soft keyboards); keydown handles special keys with ANSI-BBS sequences.
-import { ESC } from './replies.js';
+// Keyboard and text input.
+//
+// A hidden textarea is the input target on every platform. keydown handles
+// the keys that have ANSI-BBS sequences (keymap.ts); everything else is text,
+// read from the textarea itself:
+//   * composition (IME, dead keys): nothing is sent until compositionend;
+//   * soft keyboards (Gboard reports keyCode 229 and an "Unidentified" key for
+//     every key, so keydown is useless there): the input event's effect on the
+//     textarea is diffed against what was sent, so a predictive-text
+//     replacement of a whole word becomes backspaces plus the new text;
+//   * a two-space sentinel stays in the textarea so a soft-keyboard backspace
+//     always has something to delete (and so fires an input event).
+import { mapKey, keySequence, type BackspaceMode } from './keymap.ts';
 
-const CSI = ESC + '[';
-
-/** ANSI-BBS / CTerm key sequences (all are in ENiGMA's client.js key table). */
-export const KEYS: Record<string, string> = {
-    Enter: '\r',
-    Backspace: '\b',
-    Tab: '\t',
-    Escape: ESC,
-    ArrowUp: CSI + 'A',
-    ArrowDown: CSI + 'B',
-    ArrowRight: CSI + 'C',
-    ArrowLeft: CSI + 'D',
-    Home: CSI + 'H',
-    End: CSI + 'K',
-    Insert: CSI + '@',
-    Delete: String.fromCharCode(0x7f),
-    PageUp: CSI + 'V',
-    PageDown: CSI + 'U',
-    F1: ESC + 'OP',
-    F2: ESC + 'OQ',
-    F3: ESC + 'OR',
-    F4: ESC + 'OS',
-    F5: CSI + '15~',
-    F6: CSI + '17~',
-    F7: CSI + '18~',
-    F8: CSI + '19~',
-    F9: CSI + '20~',
-    F10: CSI + '21~',
-    F11: CSI + '23~',
-    F12: CSI + '24~',
-};
-
-// Kept in the textarea so a soft-keyboard backspace always has something to
-// delete (Gboard sends keyCode 229 and only a deleteContentBackward input).
 const SENTINEL = '  ';
+
+export interface InputHandlers {
+    /** Text or key sequence for the host (encoded by the terminal). */
+    send(text: string): void;
+    /** Pasted text (the terminal encodes and chunks it). */
+    paste(text: string): void;
+    /**
+     * Terminal-level shortcuts, before the keymap (copy, scrollback keys).
+     * Return true when the key was handled and must not reach the host.
+     */
+    shortcut(e: KeyboardEvent): boolean;
+    /** Called before anything goes to the host (leaves the scrollback view). */
+    willSend(): void;
+    backspace(): BackspaceMode;
+}
 
 export class Input {
     readonly textarea: HTMLTextAreaElement;
     private last = SENTINEL;
     private composing = false;
+    /** Sticky modifiers from the key bar, applied to the next key or character. */
+    sticky = { ctrl: false, alt: false };
+    onStickyChange: (() => void) | null = null;
 
     constructor(
         host: HTMLElement,
-        private readonly send: (text: string) => void,
+        private readonly h: InputHandlers,
     ) {
         const ta = document.createElement('textarea');
-        ta.className = 'enig-term__input';
+        ta.className = 'input';
         ta.setAttribute('autocapitalize', 'off');
         ta.setAttribute('autocomplete', 'off');
         ta.setAttribute('autocorrect', 'off');
         ta.setAttribute('spellcheck', 'false');
+        ta.setAttribute('enterkeyhint', 'send');
         ta.setAttribute('aria-label', 'Terminal input');
+        ta.setAttribute('tabindex', '0');
         ta.value = SENTINEL;
-        // Off-screen but focusable; a zero-size element can be refused focus on iOS.
-        Object.assign(ta.style, {
-            position: 'absolute',
-            left: '-9999px',
-            top: '0',
-            width: '1em',
-            height: '1em',
-            opacity: '0',
-            resize: 'none',
-        });
         host.appendChild(ta);
         this.textarea = ta;
+        this.resetCaret();
 
         ta.addEventListener('keydown', e => this.onKeyDown(e));
         ta.addEventListener('compositionstart', () => (this.composing = true));
@@ -74,30 +61,102 @@ export class Input {
             this.composing = false;
             this.flush();
         });
+        ta.addEventListener('beforeinput', e => this.onBeforeInput(e));
         ta.addEventListener('input', e => {
             if ((e as InputEvent).isComposing || this.composing) return;
             this.flush();
         });
-        host.addEventListener('pointerdown', () => this.focus());
+        ta.addEventListener('paste', e => {
+            const text = e.clipboardData?.getData('text/plain');
+            e.preventDefault();
+            if (text) this.h.paste(text);
+        });
     }
 
     focus(): void {
         this.textarea.focus({ preventScroll: true });
     }
 
-    private onKeyDown(e: KeyboardEvent): void {
-        if (e.isComposing || e.keyCode === 229) return; // IME owns it
-        let seq: string | undefined;
-        if (e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1) {
-            const c = e.key.toUpperCase().charCodeAt(0);
-            if (c >= 0x40 && c <= 0x5f) seq = String.fromCharCode(c & 0x1f);
-        } else if (!e.metaKey) {
-            seq = KEYS[e.key];
-            if (seq === KEYS.Tab && e.shiftKey) seq = CSI + 'Z';
+    get focused(): boolean {
+        const root = this.textarea.getRootNode() as Document | ShadowRoot;
+        return root.activeElement === this.textarea;
+    }
+
+    private resetCaret(): void {
+        this.textarea.value = SENTINEL;
+        this.last = SENTINEL;
+        try {
+            this.textarea.setSelectionRange(SENTINEL.length, SENTINEL.length);
+        } catch {
+            /* not focusable yet */
         }
+    }
+
+    /** A key sequence from the key bar or the API, with sticky modifiers applied. */
+    pressKey(key: string): void {
+        const e = { key, ctrlKey: this.sticky.ctrl, altKey: this.sticky.alt, shiftKey: false, metaKey: false };
+        const seq = mapKey(e, { backspace: this.h.backspace() }) ?? (key.length === 1 ? key : undefined);
+        this.clearSticky();
+        if (seq !== undefined) this.out(seq);
+    }
+
+    setSticky(mod: 'ctrl' | 'alt', on: boolean): void {
+        this.sticky[mod] = on;
+        this.onStickyChange?.();
+    }
+
+    private clearSticky(): void {
+        if (this.sticky.ctrl || this.sticky.alt) {
+            this.sticky.ctrl = this.sticky.alt = false;
+            this.onStickyChange?.();
+        }
+    }
+
+    private out(s: string): void {
+        this.h.willSend();
+        this.h.send(s);
+    }
+
+    private onKeyDown(e: KeyboardEvent): void {
+        if (e.isComposing || e.keyCode === 229) return; // IME or a soft keyboard owns it
+        if (this.h.shortcut(e)) {
+            e.preventDefault();
+            return;
+        }
+        // Ctrl+V (Cmd+V elsewhere) is the browser's paste: the paste event delivers it.
+        if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'v') return;
+        const ev = {
+            key: e.key,
+            code: e.code,
+            ctrlKey: e.ctrlKey || this.sticky.ctrl,
+            altKey: e.altKey || this.sticky.alt,
+            shiftKey: e.shiftKey,
+            metaKey: e.metaKey,
+        };
+        const seq = mapKey(ev, { backspace: this.h.backspace() });
         if (seq !== undefined) {
             e.preventDefault();
-            this.send(seq);
+            this.clearSticky();
+            this.out(seq);
+        }
+    }
+
+    private onBeforeInput(e: InputEvent): void {
+        switch (e.inputType) {
+            case 'insertLineBreak':
+            case 'insertParagraph':
+                // Soft-keyboard Enter. Keep the textarea single-line.
+                e.preventDefault();
+                this.flush();
+                this.out('\r');
+                break;
+            case 'insertFromPaste':
+            case 'insertFromDrop':
+                // Handled by the paste event (or not at all for drops).
+                e.preventDefault();
+                break;
+            default:
+                break;
         }
     }
 
@@ -108,14 +167,18 @@ export class Input {
         const max = Math.min(cur.length, this.last.length);
         while (p < max && cur[p] === this.last[p]) p++;
         const deleted = this.last.length - p;
-        const inserted = cur.slice(p).replace(/\r?\n/g, '\r');
-        const out = '\b'.repeat(deleted) + inserted;
-        if (out) this.send(out);
-        if (cur.length > 64 || cur.length < SENTINEL.length) {
-            this.textarea.value = SENTINEL;
-            this.last = SENTINEL;
-        } else {
-            this.last = cur;
+        let inserted = cur.slice(p).replace(/\r?\n/g, '\r');
+        this.last = cur;
+        if (cur.length > 64 || cur.length < SENTINEL.length) this.resetCaret();
+        if (!deleted && !inserted) return;
+        // Sticky Ctrl/Alt from the key bar apply to the first typed character.
+        if (inserted && (this.sticky.ctrl || this.sticky.alt)) {
+            const first = inserted[0];
+            const seq = mapKey({ key: first, ctrlKey: this.sticky.ctrl, altKey: this.sticky.alt }, { backspace: this.h.backspace() });
+            this.clearSticky();
+            if (seq !== undefined) inserted = seq + inserted.slice(1);
         }
+        const bs = keySequence('Backspace', { backspace: this.h.backspace() })!;
+        this.out(bs.repeat(deleted) + inserted);
     }
 }

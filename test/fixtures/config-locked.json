@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "endpoint": "ws://127.0.0.1:1/locked",
+  "title": "Locked Board",
+  "lockEndpoint": true,
+  "lock": ["crt"],
+  "crt": false,
+  "operatorExtra": { "ignored": true }
+}
