@@ -93,7 +93,7 @@ test('CPR, 5n, 255n, CTerm state reports', () => {
     assert.equal(replyFor({ t: 'req', k: 'ctsmrr', n: 5 }), `${CSI}=5;0n`);
     assert.equal(replyFor({ t: 'req', k: 'ctsmrr', n: 7 }), null, 'no audio: no report');
     assert.equal(replyFor({ t: 'req', k: 'ctsmrr', n: 99 }), null);
-    assert.equal(replyFor({ t: 'req', k: 'fontstate', result: 0, slots: [42, 0, 0, 0] }), `${CSI}=1;43;0;42;0;0;0n`);
+    assert.equal(replyFor({ t: 'req', k: 'fontstate', first: 43, result: 0, slots: [42, 0, 0, 0] }), `${CSI}=1;43;0;42;0;0;0n`);
     assert.equal(replyFor({ t: 'req', k: 'fontmode', modes: [] }), `${CSI}=2;n`);
     assert.equal(replyFor({ t: 'req', k: 'fontmode', modes: [7, 25, 33] }), `${CSI}=2;7;25;33n`);
     assert.equal(replyFor({ t: 'req', k: 'fontdim', h: 16, w: 8 }), `${CSI}=3;16;8n`);

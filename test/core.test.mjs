@@ -3,7 +3,7 @@
 // Run: node --test test/core.test.mjs   (after npm run build:wasm)
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadCore, bytes, framePixels, testFont8x16, ESC, CSI, ST } from './core-harness.mjs';
+import { loadCore, bytes, framePixels, testFont8x16, withFonts, pcFont, amigaFont, AMIGA_FONT_DIR, ESC, CSI, ST } from './core-harness.mjs';
 
 const { Core, memory } = await loadCore();
 
@@ -110,17 +110,27 @@ test('a one-character change renders one text row, not the full frame', () => {
     assert.equal(c.frame_len(), 640 * 16 * 4);
 });
 
-test('font select 42 loads Topaz and reports success', () => {
-    const c = new Core(80, 25, 'ansi');
+test('font select of a slot with no font is refused, not drawn blank', () => {
+    const c = withFonts(new Core(80, 25, 'ansi'));
     c.feed(bytes(`${CSI}0;42 D${CSI}=1n`));
     const ev = events(c);
     const f = ev.find(e => e.t === 'font');
-    assert.ok(f && f.ok && f.font === 42);
+    assert.deepEqual([f.ok, f.font, f.reason], [false, 42, 'missing']);
     const st = ev.find(e => e.k === 'fontstate');
-    assert.equal(st.result, 0);
-    assert.equal(st.slots[0], 42);
+    assert.equal(st.result, 1, 'pR = 1: failed');
+    assert.deepEqual(st.slots, [0, 0, 0, 0]);
+    assert.equal(c.font_page(), 0, 'text keeps the font it had');
+    assert.equal(c.has_font(42), false);
+});
+
+test('font select 42 works once the shell has loaded a font for it', () => {
+    const c = withFonts(new Core(80, 25, 'ansi'), { 42: pcFont('iso-8859-1') });
+    c.feed(bytes(`${CSI}0;42 D${CSI}=1n`));
+    const ev = events(c);
+    assert.ok(ev.find(e => e.t === 'font').ok);
+    const st = ev.find(e => e.k === 'fontstate');
+    assert.deepEqual([st.first, st.result, st.slots[0]], [43, 0, 42]);
     assert.equal(c.font_page(), 42);
-    assert.match(c.font_name(42), /topaz/i);
 });
 
 test('dcs font: CTerm:Font loads a slot that SP D can select (slot >= 43)', () => {

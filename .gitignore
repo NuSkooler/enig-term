@@ -12,3 +12,4 @@ dev-config.json
 test/screenshots/
 # Spike outputs that show third-party art (kept local only).
 docs/spike/*enigma*
+test/amiga-fonts/

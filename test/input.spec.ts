@@ -1,7 +1,7 @@
 // Input: keymap, typed text encoding, IME/composition and soft-keyboard
 // paths, paste. Host-bound bytes are captured through onLocalReply.
 import { test, expect, type Page } from '@playwright/test';
-import { open, captureSent, sent, write, CSI, ESC } from './helpers';
+import { open, captureSent, sent, write, CSI, ESC, loadPcFont } from './helpers';
 
 const bytes = (s: string) => [...s].map(c => c.charCodeAt(0));
 
@@ -49,9 +49,12 @@ test('typed text is CP437; named keys are ANSI-BBS sequences', async ({ page }) 
     expect(await sent(page)).toEqual([27, 0x78]);
 });
 
+// Slot 42 gets a licensed stand-in font (Latin-1 order): the charset follows
+// the slot number, and Amiga fonts are not part of the repo.
 test('text goes out as Latin-1 while an Amiga font is active', async ({ page }) => {
     await open(page);
     await captureSent(page);
+    await loadPcFont(page, 42);
     await write(page, `${CSI}0;42 D`);
     await page.keyboard.type('é');
     expect(await sent(page)).toEqual([0xe9]);
@@ -138,6 +141,7 @@ test('paste: encoded like typing, CR line ends, sent in chunks', async ({ page }
 test('paste under an Amiga font is Latin-1', async ({ page }) => {
     await open(page);
     await captureSent(page);
+    await loadPcFont(page, 42);
     await write(page, `${CSI}0;42 D`);
     await page.evaluate(() => (window as any).enigTerm.paste('Grüße'));
     await page.waitForTimeout(50);

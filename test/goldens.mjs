@@ -6,21 +6,28 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadCore, framePixels } from './core-harness.mjs';
+import { loadCore, framePixels, pcFont, withFonts } from './core-harness.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const GOLDEN_FILE = path.join(here, 'goldens.json');
 export const FIXTURES = [
     { name: 'cp437-testcard', file: 'cp437-testcard.ans', mode: 'stream' },
     { name: 'sauce-ice-9px', file: 'sauce-ice-9px.ans', mode: 'sauce' },
-    { name: 'amiga-topaz-latin1', file: 'amiga-topaz-latin1.ans', mode: 'stream' },
+    // Amiga fonts are not part of the repo: slot 42 gets our ISO-8859-1 font,
+    // which has the same glyph order, as a licensed stand-in.
+    { name: 'latin1-slot42', file: 'amiga-topaz-latin1.ans', mode: 'stream', fonts: { 42: ['iso-8859-1', 16] } },
 ];
+
+/** Fonts a fixture needs, as {slot: bytes} (slot 0 is always CP437). */
+export function fixtureFonts(f) {
+    return Object.fromEntries(Object.entries(f.fonts ?? {}).map(([slot, [cp, h]]) => [slot, pcFont(cp, h)]));
+}
 
 export async function computeGoldens() {
     const { Core, memory } = await loadCore();
     const out = {};
     for (const f of FIXTURES) {
-        const c = new Core(80, 25, 'ansi');
+        const c = withFonts(new Core(80, 25, 'ansi'), fixtureFonts(f));
         const data = fs.readFileSync(path.join(here, 'fixtures', f.file));
         if (f.mode === 'sauce') c.load_sauce_art(data);
         else c.feed(data);

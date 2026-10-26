@@ -8,7 +8,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { open, shot, CSI } from './helpers';
+import { open, shot, CSI, loadPcFont, settle, amigaFontsInstalled } from './helpers';
 
 const GOLDENS = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'test', 'goldens.json'), 'utf8'));
 
@@ -134,12 +134,28 @@ test('SAUCE file: iCE + 9px + font name applied; golden frame', async ({ page },
     await shot(page, 'sauce-ice-9px', ti.project.name);
 });
 
-test('Amiga: Topaz via CSI 0;42 SP D, Latin-1 high half; golden frame', async ({ page }, ti) => {
-    await open(page);
+test('Latin-1 high half through slot 42 (licensed ISO-8859-1 stand-in); golden frame', async ({ page }, ti) => {
+    await open(page, '&profile=pc');
+    await loadPcFont(page, 42);
     const r = await show(page, 'amiga-topaz-latin1.ans');
-    expect(r.font42).toMatch(/topaz/i);
-    expect(r.sha256).toBe(GOLDENS['amiga-topaz-latin1'].sha256);
-    await shot(page, 'amiga-topaz-latin1', ti.project.name);
+    expect(r.sha256).toBe(GOLDENS['latin1-slot42'].sha256);
+    await shot(page, 'latin1-slot42', ti.project.name);
+});
+
+test('Amiga profile: Topaz test card from the fetched fonts (skipped when not installed)', async ({ page }, ti) => {
+    await open(page);
+    test.skip(!(await amigaFontsInstalled(page)), 'no Amiga fonts (npm run fonts:amiga)');
+    await page.evaluate(async name => {
+        const t = (window as any).enigTerm;
+        t.write(new Uint8Array(await (await fetch(`/fixtures/${name}`)).arrayBuffer()));
+    }, 'amiga-testcard.ans');
+    await settle(page);
+    const r = await page.evaluate(() => {
+        const t = (window as any).enigTerm;
+        return { font: t.core.core.font_name(42), page: t.core.core.font_page(), profile: t.activeProfile, yStretch: t.yStretch, charset: t.charset };
+    });
+    expect(r).toEqual({ font: 'Topaz (Amiga)', page: 42, profile: 'amiga', yStretch: 0.9375, charset: 'latin1' });
+    await shot(page, 'amiga-topaz-testcard', ti.project.name);
 });
 
 test('real ENiGMA art (local only: never committed)', async ({ page }, ti) => {

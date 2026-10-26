@@ -2,16 +2,16 @@
   "cp437-testcard": {
     "w": 640,
     "h": 400,
-    "sha256": "006a41652a4ea8684502684383ce964841f100d5de76642ea74f1669feca98c1"
+    "sha256": "3913401592c156ce4c5a79ad942769ac526f6fd8819591e307805976967d4ad0"
   },
   "sauce-ice-9px": {
     "w": 720,
     "h": 400,
-    "sha256": "f3a982313b0f8e0b1c9466d17ba513947d31de4b1d8ecf29ba48af8af0b6c1eb"
+    "sha256": "01b3e8bd9c215148efa7ea6d62a415af2545f261f7d3f72a622bfc78801beb36"
   },
-  "amiga-topaz-latin1": {
+  "latin1-slot42": {
     "w": 640,
     "h": 400,
-    "sha256": "1efa311c8f03ad1f7cfe09564c1a624d1d87197b5557fec2316b15bdfe6e9d01"
+    "sha256": "b27df16f36fd2c786a617fd567c41589456228ea30f5b022390adc10d01eacd9"
   }
 }

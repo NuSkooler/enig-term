@@ -99,4 +99,21 @@ function sauce({ title, author, group, cols, rows, flags, font, size }) {
     s += at(19, 2) + sgr(0, 37) + 'Same bytes 0xE9 0xFC 0xDF on CP437: ' + ch(0xe9) + ch(0xfc) + ch(0xdf);
     write('amiga-topaz-latin1.ans', s);
 }
+// --- Amiga test card: stays on Topaz (42); the 16 colours, Latin-1, ASCII -----
+{
+    let s = `${sgr(0)}${CSI}2J${CSI}0;42 D`;
+    s += at(1, 1) + sgr(1, 37, 44) + ' Amiga test card: CSI 0;42 SP D (Topaz), ANSI colours, ISO-8859-1'.padEnd(80) + sgr(0);
+    for (let i = 0; i < 8; i++) s += at(3, 2 + i * 9) + sgr(0, 30 + i, 40 + ((i + 7) % 8)) + ` ${30 + i}/${40 + ((i + 7) % 8)} `.padEnd(8);
+    for (let i = 0; i < 8; i++) s += at(4, 2 + i * 9) + sgr(1, 30 + i, 40 + i) + ` 1;${30 + i} `.padEnd(8);
+    for (let i = 0; i < 8; i++) s += at(5, 2 + i * 9) + sgr(0, 37, 40 + i) + '        ';
+    s += sgr(0);
+    for (let row = 0xa; row <= 0xf; row++) {
+        s += at(7 + row - 0xa, 2) + sgr(0, 33) + row.toString(16).toUpperCase() + '_ ' + sgr(0, 37);
+        for (let col = 0; col < 16; col++) s += ch(row * 16 + col) + ' ';
+    }
+    s += at(14, 2) + sgr(1, 36) + 'Gr' + ch(0xfc) + ch(0xdf) + 'e aus K' + ch(0xf6) + 'ln: caf' + ch(0xe9) + ', na' + ch(0xef) + 've, ' + ch(0xa9) + ' 1985 Commodore-Amiga';
+    s += at(16, 2) + sgr(0, 37) + 'ASCII: The quick brown fox jumps over the lazy dog. 0123456789';
+    s += at(17, 2) + sgr(1, 33) + '{}[]|\\~^`_ <>@#$%&*()+-=/?;:\'",.' + sgr(0);
+    write('amiga-testcard.ans', s);
+}
 console.log('fixtures written to', here);

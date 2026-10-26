@@ -80,3 +80,31 @@ export async function shot(page: Page, name: string, project: string) {
 }
 
 export const pkgVersion = (): string => JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')).version;
+
+/** Wait until the terminal is not holding host output for a font fetch. */
+export async function settle(page: Page) {
+    await page.waitForFunction(() => !(window as any).enigTerm.holding, null, { timeout: 10_000 });
+    await page.evaluate(() => (window as any).enigTerm.renderFrame(true));
+}
+
+/**
+ * Load one of our PC fonts into a slot, e.g. the ISO-8859-1 font into slot 42
+ * as a licensed stand-in for Topaz (same glyph order) where a test is about
+ * the slot, not the design.
+ */
+export async function loadPcFont(page: Page, slot: number, file = 'pc/iso-8859-1-8x16.psf') {
+    return page.evaluate(
+        async ([slot, file]) => {
+            const t = (window as any).enigTerm;
+            const b = new Uint8Array(await (await fetch(new URL(`fonts/${file}`, location.href))).arrayBuffer());
+            return t.loadFont(slot, `stand-in ${file}`, b) as string;
+        },
+        [slot, file] as const,
+    );
+}
+
+/** Are Amiga fonts installed where the page looks for them (npm run fonts:amiga for tests)? */
+export async function amigaFontsInstalled(page: Page) {
+    const r = await page.request.get('/fonts/amiga/manifest.json');
+    return r.ok();
+}
