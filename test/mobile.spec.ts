@@ -1,9 +1,11 @@
 // Phones: Pixel 7 (Chromium) and iPhone 14 (WebKit) emulation. Key bar shown
 // on coarse pointers and kept at the bottom of the visual viewport, no
 // horizontal page scroll, tap to focus, sticky Ctrl, the Fn row, touch-drag
-// scrollback.
-import { test, expect, type Page } from '@playwright/test';
-import { open, captureSent, sent, write, shot, CSI } from './helpers';
+// scrollback, the Files panel and transfers.
+import { test, expect, type Page, type Download } from '@playwright/test';
+import fs from 'node:fs';
+import { open, captureSent, sent, write, shot, CSI, fakeLog, fakeUrl, waitState } from './helpers';
+import { LRZSZ } from './xfer-peers.mjs';
 
 const bar = (page: Page) => page.locator('enig-term').locator('[data-keybar]');
 
@@ -91,4 +93,62 @@ test('touch drag scrolls back', async ({ page }, ti) => {
     expect(off).toBeGreaterThanOrEqual(9);
     await page.evaluate(() => (window as any).enigTerm.renderFrame(false));
     await shot(page, 'touch-scrollback', ti.project.name);
+});
+
+// --- file transfers on a phone ----------------------------------------------------
+
+test('Files panel fits the phone and opens the system file picker', async ({ page }) => {
+    await open(page);
+    const ui = (s: string) => page.locator('enig-term').locator(s);
+    await ui('[data-act="files"]').tap();
+    await expect(ui('[data-files]')).toBeVisible();
+    await ui('[data-xf="dir"]').selectOption('upload');
+    const fc = page.waitForEvent('filechooser');
+    await ui('[data-act="xf-pick"]').tap();
+    const chooser = await fc;
+    expect(chooser.isMultiple()).toBe(true);
+    await chooser.setFiles([{ name: 'a.txt', mimeType: 'text/plain', buffer: Buffer.from('a') }]);
+    await expect(ui('[data-xf-chosen]')).toHaveText(/a\.txt/);
+    const w = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, inner: window.innerWidth }));
+    expect(w.scroll).toBeLessThanOrEqual(w.inner);
+});
+
+test('a ZModem download and upload on a phone; the key bar works after them', async ({ page }) => {
+    test.skip(!LRZSZ, 'lrzsz not installed');
+    await open(page);
+    const ui = (s: string) => page.locator('enig-term').locator(s);
+    const dl: Download[] = [];
+    page.on('download', d => dl.push(d));
+    // download: starts by itself
+    let id = `m-dl-${Date.now()}`;
+    await page.evaluate(u => (window as any).enigTerm.connect(u), fakeUrl(page, 'xfer&peer=sz&set=small', id));
+    await waitState(page, 'connected');
+    await page.waitForTimeout(500);
+    await bar(page).locator('[data-key="Escape"]').tap(); // any byte; the script waits for "g"
+    await page.evaluate(() => (window as any).enigTerm.sendText('g'));
+    await expect.poll(() => page.evaluate(() => (window as any).enigTerm.transfers.status.phase), { timeout: 20_000 }).toBe('done');
+    await expect.poll(() => dl.length).toBe(1);
+    expect(fs.readFileSync((await dl[0].path())!).toString()).toBe('hello, world\r\n');
+    await expect.poll(() => page.evaluate(() => (window as any).enigTerm.transfers.busy), { timeout: 10_000 }).toBe(false);
+    await page.waitForTimeout(800);
+    let before = (await fakeLog(page, id))[0].sent.length;
+    await bar(page).locator('[data-key="Escape"]').tap();
+    await expect.poll(async () => (await fakeLog(page, id))[0].sent.slice(before)).toEqual([27]);
+    // upload: the board's receiver asks, the card asks for files
+    id = `m-ul-${Date.now()}`;
+    await page.evaluate(u => (window as any).enigTerm.connect(u), fakeUrl(page, 'xfer&peer=rz', id));
+    await waitState(page, 'connected');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).enigTerm.sendText('g'));
+    await expect.poll(() => page.evaluate(() => (window as any).enigTerm.transfers.status.phase), { timeout: 20_000 }).toBe('offer');
+    const fc = page.waitForEvent('filechooser');
+    await ui('[data-act="xf-offer-files"]').tap();
+    await (await fc).setFiles([{ name: 'phone.txt', mimeType: 'text/plain', buffer: Buffer.from('from a phone\n') }]);
+    await expect.poll(() => page.evaluate(() => (window as any).enigTerm.transfers.status.phase), { timeout: 20_000 }).toBe('done');
+    await expect.poll(async () => (await fakeLog(page, id))[0].events.find((e: string) => e.startsWith('got ')), { timeout: 20_000 }).toMatch(/^got phone\.txt 13 /);
+    await expect.poll(() => page.evaluate(() => (window as any).enigTerm.transfers.busy), { timeout: 10_000 }).toBe(false);
+    await page.waitForTimeout(800);
+    before = (await fakeLog(page, id))[0].sent.length;
+    await bar(page).locator('[data-key="Tab"]').tap();
+    await expect.poll(async () => (await fakeLog(page, id))[0].sent.slice(before)).toEqual([9]);
 });
