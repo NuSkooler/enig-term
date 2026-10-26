@@ -8,8 +8,20 @@
 //
 // Scripts: "probe" (ENiGMA-like volley and probes), "echo" (echoes data),
 // "close" (closes after the greeting), "panic" (sends CSI ? 2026 h when the
-// client types "p"), "links" (OSC 8 text), "flood" (many lines).
+// client types "p"), "links" (OSC 8 text), "flood" (many lines), "abu"
+// (ansi-bbs-utils 0.2.1's own host side runs a CTerm audio session: probe,
+// uploads, music, effects, volume, crossfade, stop; see audio-interop.spec.ts).
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+let abu = null;
+try {
+    abu = require('ansi-bbs-utils');
+} catch {
+    /* devDependency missing: the "abu" script is unavailable */
+}
 
 const IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240;
 const ESC = '\x1b';
@@ -111,17 +123,21 @@ export function handleUpgrade(req, socket) {
     // Telnet de-framing of what the client sends, to log negotiation separately.
     let tstate = 0;
     let sb = [];
+    let chunkOut = [];
     const onClientBytes = data => {
+        chunkOut = [];
         for (const b of data) {
             if (tstate === 0) {
                 if (b === IAC) tstate = 1;
                 else {
                     rec.sent.push(b);
+                    chunkOut.push(b);
                     onData(b);
                 }
             } else if (tstate === 1) {
                 if (b === IAC) {
                     rec.sent.push(255);
+                    chunkOut.push(255);
                     tstate = 0;
                 } else if (b >= WILL && b <= DONT) {
                     tstate = 10 + (b - WILL);
@@ -147,7 +163,9 @@ export function handleUpgrade(req, socket) {
                 }
             }
         }
+        if (chunkOut.length) onChunk?.(Buffer.from(chunkOut));
     };
+    let onChunk = null;
     const onData = b => {
         if (script === 'echo') send(Buffer.from([b]));
         if (script === 'panic' && b === 0x70) {
@@ -178,5 +196,103 @@ export function handleUpgrade(req, socket) {
         if (script === 'links') send(`see ${ESC}]8;;https://example.com/some/long/path?q=1${ST}the docs${ESC}]8;;${ST} or ${ESC}]8;;javascript:alert(1)${ST}this${ESC}]8;;${ST}\r\n`);
         if (script === 'flood') for (let i = 0; i < 100; i++) send(`flood line ${i}\r\n`);
         if (script === 'panic') send('type p to panic\r\n');
+        if (script === 'abu') {
+            const t = startAbu(send, rec);
+            onChunk = b => t?.feed(b);
+            socket.on('close', () => t?.destroy());
+        }
     }, 50);
+}
+
+/** Telnet-escape host data (IAC doubling). */
+function escapeIac(b) {
+    if (!b.includes(IAC)) return b;
+    const out = [];
+    for (const x of b) out.push(...(x === IAC ? [IAC, IAC] : [x]));
+    return Buffer.from(out);
+}
+
+/** A PCM16 mono WAV of a sine. */
+export function sineWav(seconds, freq, rate = 22050) {
+    const n = Math.round(seconds * rate) & ~1;
+    const b = Buffer.alloc(44 + n * 2);
+    b.write('RIFF', 0);
+    b.writeUInt32LE(36 + n * 2, 4);
+    b.write('WAVEfmt ', 8);
+    b.writeUInt32LE(16, 16);
+    b.writeUInt16LE(1, 20);
+    b.writeUInt16LE(1, 22);
+    b.writeUInt32LE(rate, 24);
+    b.writeUInt32LE(rate * 2, 28);
+    b.writeUInt16LE(2, 32);
+    b.writeUInt16LE(16, 34);
+    b.write('data', 36);
+    b.writeUInt32LE(n * 2, 40);
+    for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin((2 * Math.PI * freq * i) / rate) * 20000), 44 + i * 2);
+    return b;
+}
+
+/**
+ * ansi-bbs-utils' host side over this connection, the way a BBS uses it:
+ * term.probeAudio(), term.audio.asset/play/volume/stop. Events are logged
+ * with their time, for the browser test to line up with what it heard.
+ */
+function startAbu(send, rec) {
+    if (!abu) {
+        rec.events.push('abu: ansi-bbs-utils not installed');
+        return null;
+    }
+    const ev = m => rec.events.push(`${Date.now()} ${m}`);
+    let uploads = 0;
+    const sock = {
+        writable: true,
+        write: (data, cb) => {
+            const b = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'latin1');
+            uploads += (b.toString('latin1').match(/\x1b_SyncTERM:C;S;/g) ?? []).length;
+            send(escapeIac(b));
+            if (cb) process.nextTick(cb, null);
+            return true;
+        },
+        cork() {},
+        uncork() {},
+    };
+    const term = new abu.Terminal(sock);
+    term.setTerminalType('ansi-bbs');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    (async () => {
+        const probe = await term.probeAudio({ timeout: 4000 });
+        ev(`probe ${probe.backend} files=${probe.files}`);
+        if (probe.backend !== 'cterm') return;
+        const audio = term.audio;
+        audio.on('idle', e => ev(`idle ${e.channel}`));
+        audio.asset({ name: 'music/lobby.wav', bytes: sineWav(1.0, 440) });
+        audio.asset({ name: 'sfx/hit.wav', bytes: sineWav(0.2, 880) });
+        const ogg = new URL('./fixtures/audio/vorbis.ogg', import.meta.url);
+        audio.asset({ name: 'sfx/blip.ogg', bytes: fs.readFileSync(ogg) });
+        ev(`vorbis ${await audio.formatSupported('ogg', 'vorbis')}`);
+        ev(`mp3 ${await audio.formatSupported('mpeg', 'mp3')}`);
+        const music = await audio.play('music', 'music/lobby.wav', { loop: true, volume: 100, fadeIn: 100 });
+        ev('music');
+        await sleep(1200);
+        await audio.play('sfx', 'sfx/hit.wav', { pan: 40 });
+        ev('sfx');
+        await sleep(600);
+        await audio.play('sfx', 'sfx/blip.ogg');
+        ev('ogg');
+        await sleep(600);
+        // CTerm: Volume sets the channel's base level, V=100 being 0 dB above
+        // its default -12 dB. 10 is -20 dB.
+        await music.volume(10, { ramp: 300 });
+        ev('volume');
+        await sleep(600);
+        await audio.play('music', 'music/lobby.wav', { loop: true, fadeIn: 400, crossfade: true, volume: 100 });
+        ev('crossfade');
+        await sleep(800);
+        await music.stop({ fade: 300 });
+        ev('stop');
+        await sleep(900);
+        ev(`uploads ${uploads}`);
+        ev('done');
+    })().catch(e => ev(`abu error ${e?.message ?? e}`));
+    return term;
 }

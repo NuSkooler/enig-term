@@ -17,7 +17,7 @@ if (!wk.ok) {
 const wkLaunch = wk.ok && wk.executablePath ? { executablePath: wk.executablePath } : {};
 
 const DESKTOP = { viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 };
-const desktopSpecs = /(render|input|terminal|scrollback|embed|links|fonts|live|bench)\.spec\.ts/;
+const desktopSpecs = /(render|input|terminal|scrollback|embed|links|fonts|live|bench|audio|audio-interop)\.spec\.ts/;
 const mobileSpecs = /mobile\.spec\.ts/;
 
 const projects: Project[] = [
