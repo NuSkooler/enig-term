@@ -217,8 +217,13 @@ test('sender: a C inside status text is not a request; a C or NAK followed by si
     const b0 = m.take();
     assert.equal(b0.length, 3 + 128 + 1, 'NAK: a checksum block 0');
     assert.deepEqual(b0.slice(0, 3), [SOH, 0, 0xff]);
-    // A C right after the block (sexyz's purge threw it away): send it again.
+    // A C in status text right after the block is not a request...
+    m.feed('Block 0: Requesting mode: 16-bit CRC\n');
+    m.wait(200);
+    assert.deepEqual(m.take(), []);
+    // ...a C on a quiet line after it is (sexyz's purge threw the block away): send it again.
     m.feed([CRC_REQ]);
+    m.wait(QUIET_MS + 20);
     assert.equal(m.take().length, 132);
     m.feed([ACK, CRC_REQ]);
     m.wait(200);
@@ -338,12 +343,12 @@ const realFiles = {
 
 const tick = () => performance.now();
 
-async function weReceive(peer, set, proto, { blockPad }) {
+async function weReceive(peer, set, proto, { blockPad, mergeStderr = false }) {
     const dir = tmpdir();
     const files = realFiles[set]();
     for (const [n, d] of files) fs.writeFileSync(path.join(dir, n), d);
     const r = sink();
-    const res = await runPeer(peerCommand(peer, dir), io => new XyReceiver(proto, io.send, { ...r.ev, done: x => io.done(x) }, { now: tick, name: files[0][0] }));
+    const res = await runPeer(peerCommand(peer, dir), io => new XyReceiver(proto, io.send, { ...r.ev, done: x => io.done(x) }, { now: tick, name: files[0][0] }), { mergeStderr });
     fs.rmSync(dir, { recursive: true, force: true });
     assert.equal(res.result.ok, true, `${JSON.stringify(res.result)}\n${res.stderr.slice(-1500)}`);
     assert.equal(res.exit.code, 0, res.stderr.slice(-1500));
@@ -352,10 +357,10 @@ async function weReceive(peer, set, proto, { blockPad }) {
     for (const [n, d] of files) assert.equal(sha(r.files.find(f => f.name === n).data), sha(blockPad ? padTo(d, blockPad) : Buffer.from(d)), `${n} differs`);
 }
 
-async function weSend(peer, set, proto, { blockPad }) {
+async function weSend(peer, set, proto, { blockPad, mergeStderr = false }) {
     const dir = tmpdir();
     const files = realFiles[set]();
-    const res = await runPeer(peerCommand(peer, dir, { recvName: files[0][0] }), io => new XySender(proto, files.map(([n, d]) => src(n, d)), io.send, { ...quietEv(), done: x => io.done(x) }, { now: tick }));
+    const res = await runPeer(peerCommand(peer, dir, { recvName: files[0][0] }), io => new XySender(proto, files.map(([n, d]) => src(n, d)), io.send, { ...quietEv(), done: x => io.done(x) }, { now: tick }), { mergeStderr });
     const got = fs.readdirSync(dir).sort();
     try {
         assert.equal(res.result.ok, true, `${JSON.stringify(res.result)}\n${res.stderr.slice(-1500)}`);
@@ -383,6 +388,16 @@ for (const set of [...SETS, 'batch']) {
     test(`lrzsz sb -> us (YModem download, ${set})`, { skip: !LRZSZ && 'lrzsz not installed' }, () => weReceive('sb', set, 'ymodem', {}));
     test(`us -> lrzsz rb (YModem upload, ${set})`, { skip: !LRZSZ && 'lrzsz not installed' }, () => weSend('rb', set, 'ymodem', {}));
 }
+
+// Under ENiGMA sexyz runs on a pty: its status text ("Copyright", "CRC-16", progress) is in the stream.
+for (const set of ['allbytes', 'batch']) {
+    test(`sexyz sY -> us with its status text in the stream (${set})`, { skip: !SEXYZ && 'sexyz not installed' }, () => weReceive('sexyz sY', set, 'ymodem', { mergeStderr: true }));
+    test(`us -> sexyz ry with its status text in the stream (${set})`, { skip: !SEXYZ && 'sexyz not installed' }, () => weSend('sexyz ry', set, 'ymodem', { mergeStderr: true }));
+}
+test('sexyz sX -> us and us -> sexyz rC with status text in the stream', { skip: !SEXYZ && 'sexyz not installed' }, async () => {
+    await weReceive('sexyz sX', 'allbytes', 'xmodem', { blockPad: 128, mergeStderr: true });
+    await weSend('sexyz rC', 'allbytes', 'xmodem-1k', { blockPad: 128, mergeStderr: true });
+});
 
 test('us -> sexyz ry, cancelled from our side mid-file: both ends stop, sexyz fails', { skip: !SEXYZ && 'sexyz not installed' }, async () => {
     const dir = tmpdir();

@@ -98,6 +98,20 @@ for (const [label, down, up, skip] of PEERS) {
         });
     }
 
+    // Under ENiGMA the program runs on a pty: its status text is in the stream.
+    for (const set of ['allbytes', 'batch']) {
+        test(`${label} ${down} -> us, status text in the stream (${set})`, { skip }, async () => {
+            const { res, r, files } = await download(down, set, { run: { mergeStderr: true } });
+            assert.equal(res.result.ok, true, `${JSON.stringify(res.result)}\n${res.stderr.slice(-1500)}`);
+            for (const [n, d] of files) assert.equal(sha(r.files.find(f => f.name === n).data), sha(d), `${n} differs`);
+        });
+        test(`us -> ${label} ${up}, status text in the stream (${set})`, { skip }, async () => {
+            const { res, got, files } = await upload(up, set, { run: { mergeStderr: true } });
+            assert.equal(res.result.ok, true, `${JSON.stringify(res.result)}\n${res.stderr.slice(-1500)}`);
+            for (const [n, d] of files) assert.equal(sha(got[n]), sha(d), `${n} differs`);
+        });
+    }
+
     test(`us -> ${label}: cancelled from our side mid-file; both ends stop`, { skip }, async () => {
         let engine;
         const { res } = await upload(up, 'big', {

@@ -128,6 +128,9 @@ pub struct Host {
     pub max_file: u64,
     /// Bytes of the current file done, and its size.
     pub progress: (u64, u64),
+    /// The received file being written (its NamedTempFile's generation), if any.
+    pub open_file: Option<u64>,
+    pub file_gen: u64,
 }
 
 pub type HostRef = Arc<Mutex<Host>>;
@@ -256,23 +259,40 @@ pub struct NamedTempFile {
     host: HostRef,
     name: PathBuf,
     kept: bool,
+    gen_: u64,
 }
 
 /// Received data goes out in events of at most this many bytes.
 const DATA_EVENT_MAX: usize = 64 * 1024;
 
 impl NamedTempFile {
+    /// A new received file. rz replaces an open one (a repeated ZFILE) by
+    /// assigning over it, which drops the old one only after this: so the
+    /// old one is discarded here, first, and its drop says nothing more.
     pub fn create(name: &str, size: u64) -> io::Result<Self> {
         let host = current()?;
-        host.lock().unwrap().events.push_back(FileEvent::Start { name: name.to_string(), size });
-        Ok(Self { host, name: PathBuf::from(name), kept: false })
+        let mut h = host.lock().unwrap();
+        if h.open_file.take().is_some() {
+            h.events.push_back(FileEvent::Discard);
+        }
+        h.file_gen += 1;
+        let gen_ = h.file_gen;
+        h.open_file = Some(gen_);
+        h.events.push_back(FileEvent::Start { name: name.to_string(), size });
+        drop(h);
+        Ok(Self { host, name: PathBuf::from(name), kept: false, gen_ })
     }
     pub fn as_file_mut(&mut self) -> &mut Self {
         self
     }
     pub fn keep(mut self) -> io::Result<((), PathBuf)> {
         self.kept = true;
-        self.host.lock().unwrap().events.push_back(FileEvent::End);
+        let mut h = self.host.lock().unwrap();
+        if h.open_file == Some(self.gen_) {
+            h.open_file = None;
+            h.events.push_back(FileEvent::End);
+        }
+        drop(h);
         Ok(((), self.name.clone()))
     }
 }
@@ -280,6 +300,9 @@ impl NamedTempFile {
 impl io::Write for NamedTempFile {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut h = self.host.lock().unwrap();
+        if h.open_file != Some(self.gen_) {
+            return Ok(buf.len()); // replaced: nothing of it goes out any more
+        }
         if let Some(FileEvent::Data(last)) = h.events.back_mut() {
             if last.len() + buf.len() <= DATA_EVENT_MAX {
                 last.extend_from_slice(buf);
@@ -298,7 +321,10 @@ impl Drop for NamedTempFile {
     fn drop(&mut self) {
         if !self.kept {
             if let Ok(mut h) = self.host.lock() {
-                h.events.push_back(FileEvent::Discard);
+                if h.open_file == Some(self.gen_) {
+                    h.open_file = None;
+                    h.events.push_back(FileEvent::Discard);
+                }
             }
         }
     }

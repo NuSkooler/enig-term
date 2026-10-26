@@ -21,7 +21,7 @@
 // A panic in the WASM is a trap that leaves the instance unusable: the
 // transfer fails, and the next one instantiates the module again.
 import init, { ZSession, last_panic, __enigModule, __enigReset } from '../../build/wasm-zmodem/enig_term_zmodem.js';
-import type { SourceFile, TransferEnd, TransferEngine, TransferEvents } from './types.ts';
+import { BOARD_LEFT, type SourceFile, type TransferEnd, type TransferEngine, type TransferEvents } from './types.ts';
 import { CANCEL_SEQ, concat, safeName } from './xymodem.ts';
 
 let loading: Promise<void> | null = null;
@@ -69,6 +69,8 @@ export class ZmodemEngine implements TransferEngine {
     private index = 0;
     private doneFiles = 0;
     private received = 0;
+    /** The size the sender announced for the file being received. */
+    private announced: number | null = null;
     private lastProgress = -1;
     private lastInput: number;
     private lastActivity: number;
@@ -164,7 +166,7 @@ export class ZmodemEngine implements TransferEngine {
         this.alive();
         this.guard(s => s.take_input()); // part of the screen, kept above
         this.trailing = [screen, ...this.queued.splice(0), ...this.trailing];
-        this.end({ ok: false, files: this.doneFiles, error: 'the board ended the transfer', cancelled: 'remote' });
+        this.end({ ok: false, files: this.doneFiles, error: BOARD_LEFT, cancelled: 'remote' });
     }
 
     tick(): void {
@@ -223,6 +225,7 @@ export class ZmodemEngine implements TransferEngine {
                 switch (kind) {
                     case 'start':
                         this.received = 0;
+                        this.announced = e.size;
                         this.ev.fileStart({
                             name: this.mode === 'receive' ? safeName(e.name) : e.name,
                             size: e.size,
@@ -249,10 +252,14 @@ export class ZmodemEngine implements TransferEngine {
                         }
                         break;
                     }
-                    case 'end':
-                        this.doneFiles++;
-                        this.ev.fileEnd(true);
+                    case 'end': {
+                        // Received: complete only at the size the sender announced.
+                        const ok = this.mode === 'send' || this.announced === null || this.received === this.announced;
+                        if (!ok) this.log(`file ended at ${this.received} of ${this.announced} bytes`);
+                        if (ok) this.doneFiles++;
+                        this.ev.fileEnd(ok);
                         break;
+                    }
                     case 'discard':
                         this.ev.fileEnd(false);
                         break;

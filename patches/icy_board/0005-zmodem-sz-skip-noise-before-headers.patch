@@ -1,0 +1,65 @@
+diff --git a/crates/icy_net/src/protocol/zmodem/sz.rs b/crates/icy_net/src/protocol/zmodem/sz.rs
+index 27a96b8..4914323 100644
+--- a/crates/icy_net/src/protocol/zmodem/sz.rs
++++ b/crates/icy_net/src/protocol/zmodem/sz.rs
+@@ -1,6 +1,7 @@
+ // Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): the clock, sleep and the file reader come from crate::rt (no std::fs or tokio on wasm32).
+ // Changed for enig-term (patches/icy_board/0003-zmodem-sz-ignore-repeated-zrpos.patch): a repeated ZRPOS for the same offset within a second is ignored.
+ // Changed for enig-term (patches/icy_board/0004-zmodem-host-reads-and-skips.patch): file data is awaited from the host.
++// Changed for enig-term (patches/icy_board/0005-zmodem-sz-skip-noise-before-headers.patch): text before a header is skipped, not an error.
+ #![allow(clippy::unused_self)]
+ 
+ use std::{
+@@ -45,8 +46,13 @@ pub struct Sz {
+     receiver_capabilities: u8,
+     nonstop: bool,
+     last_rpos: Option<(u64, Instant)>,
++    noise: usize,
+ }
+ 
++/// enig-term: bytes skipped as noise before a header (status text a board's
++/// transfer program writes into the same pty) before they count as errors.
++const MAX_NOISE: usize = 16 * 1024;
++
+ impl Sz {
+     pub fn new(block_length: usize) -> Self {
+         Self {
+@@ -62,6 +68,7 @@ impl Sz {
+             package_len: block_length,
+             nonstop: true,
+             last_rpos: None,
++            noise: 0,
+         }
+     }
+ 
+@@ -296,6 +303,13 @@ impl Sz {
+                     // Header, not as a header error: otherwise the error budget
+                     // would abort before the fifth consecutive CAN is seen.
+                     Some(ZModemError::ZPADExected(0x11 | 0x91 | 0x13 | 0x93 | 0x18)) => return Ok(None),
++                    // enig-term: anything else before a ZPAD is noise between frames
++                    // (the receiver's status text on a pty): skip it, as receivers
++                    // skip garbage, within a bound.
++                    Some(ZModemError::ZPADExected(_)) if self.noise < MAX_NOISE => {
++                        self.noise += 1;
++                        return Ok(None);
++                    }
+                     Some(
+                         ZModemError::ZPADExected(_)
+                         | ZModemError::ZLDEExected(_)
+@@ -324,6 +338,7 @@ impl Sz {
+             Ok(header) => {
+                 if header.is_some() {
+                     self.errors = 0;
++                    self.noise = 0;
+                 }
+                 Ok(header)
+             }
+@@ -333,7 +348,7 @@ impl Sz {
+     /// Handshakes already wait for a response. Skip boundary flow control and
+     /// stale ZRINIT there too, but bound the amount of noise consumed per call.
+     async fn read_handshake_header(&mut self, com: &mut dyn Connection, transfer_state: &mut TransferState) -> crate::Result<Option<Header>> {
+-        for _ in 0..32 {
++        for _ in 0..(32 + MAX_NOISE) {
+             let result = Header::read(com, &mut self.can_count).await;
+             if let Some(header) = self.process_header_read(com, transfer_state, result).await? {
+                 if header.frame_type != ZFrameType::RIinit {

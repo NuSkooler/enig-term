@@ -37,8 +37,10 @@ export function tmpdir(prefix = 'enig-term-xfer-') {
  * The remote command for a case. `dir`: files to send (peer sends) or the
  * directory to receive into (peer receives). Returns [cmd, args, cwd].
  */
-export function peerCommand(peer, dir, { recvName } = {}) {
+export function peerCommand(peer, dir, { recvName, telnet = false } = {}) {
     const files = () => fs.readdirSync(dir).sort().map(f => path.join(dir, f));
+    // sexyz in stdio mode: -raw over pipes; -telnet does its own IAC escaping, as under ENiGMA.
+    const T = telnet ? '-telnet' : '-raw';
     const list = () => {
         const l = path.join(path.dirname(dir), `${path.basename(dir)}.list`);
         fs.writeFileSync(l, files().join('\n'));
@@ -46,17 +48,17 @@ export function peerCommand(peer, dir, { recvName } = {}) {
     };
     switch (peer) {
         // the board sends (we receive)
-        case 'sexyz sX': return [SEXYZ, ['-raw', 'sX', list()], dir];
-        case 'sexyz sx': return [SEXYZ, ['-raw', 'sx', list()], dir];
-        case 'sexyz sY': return [SEXYZ, ['-raw', 'sY', list()], dir];
-        case 'sexyz sz': return [SEXYZ, ['-raw', '-8', 'sz', list()], dir];
+        case 'sexyz sX': return [SEXYZ, [T, 'sX', list()], dir];
+        case 'sexyz sx': return [SEXYZ, [T, 'sx', list()], dir];
+        case 'sexyz sY': return [SEXYZ, [T, 'sY', list()], dir];
+        case 'sexyz sz': return [SEXYZ, [T, '-8', 'sz', list()], dir];
         case 'sx': return ['sx', ['-k', ...files()], dir];
         case 'sb': return ['sb', ['-k', ...files()], dir];
         case 'sz': return ['sz', ['--zmodem', '--try-8k', '--binary', '--restricted', ...files()], dir];
         // the board receives (we send)
-        case 'sexyz rC': return [SEXYZ, ['-raw', 'rC', path.join(dir, recvName ?? 'upload.bin')], dir];
-        case 'sexyz ry': return [SEXYZ, ['-raw', 'ry', dir + '/'], dir];
-        case 'sexyz rz': return [SEXYZ, ['-raw', '-8', 'rz', dir + '/'], dir];
+        case 'sexyz rC': return [SEXYZ, [T, 'rC', path.join(dir, recvName ?? 'upload.bin')], dir];
+        case 'sexyz ry': return [SEXYZ, [T, 'ry', dir + '/'], dir];
+        case 'sexyz rz': return [SEXYZ, [T, '-8', 'rz', dir + '/'], dir];
         case 'rx': return ['rx', ['-c', recvName ?? 'upload.bin'], dir];
         case 'rb': return ['rb', [], dir];
         case 'rz': return ['rz', ['--zmodem', '--binary', '--restricted', '--keep-uppercase'], dir];
@@ -69,10 +71,11 @@ export function peerCommand(peer, dir, { recvName } = {}) {
  * engine's feed() gets what it writes. Resolves when both have finished.
  * `onBytes(total)` sees the running byte count (for cancel tests).
  */
-export function runPeer([cmd, args, cwd], makeEngine, { timeout = 120_000, tickMs = 20, onBytes } = {}) {
+export function runPeer([cmd, args, cwd], makeEngine, { timeout = 120_000, tickMs = 20, onBytes, mergeStderr = false } = {}) {
     return new Promise(resolve => {
         const t0 = Date.now();
-        const p = spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+        // mergeStderr: the status text in the stream, in order (one pipe), as on a pty.
+        const p = mergeStderr ? spawn('sh', ['-c', 'exec "$0" "$@" 2>&1', cmd, ...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] }) : spawn(cmd, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
         let stderr = '';
         let result = null;
         let exit = null;

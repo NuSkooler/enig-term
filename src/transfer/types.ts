@@ -22,6 +22,9 @@ export interface FileInfo {
     batchBytes?: number | null;
 }
 
+/** The error of a transfer that ended because the board was drawing its screen again. */
+export const BOARD_LEFT = 'the board ended the transfer';
+
 export type TransferEnd =
     | { ok: true; files: number }
     | { ok: false; files: number; error: string; cancelled?: 'local' | 'remote' };

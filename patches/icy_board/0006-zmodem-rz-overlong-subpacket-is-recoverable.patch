@@ -1,0 +1,32 @@
+diff --git a/crates/icy_net/src/protocol/zmodem/rz.rs b/crates/icy_net/src/protocol/zmodem/rz.rs
+index 84eb975..2afe0cd 100644
+--- a/crates/icy_net/src/protocol/zmodem/rz.rs
++++ b/crates/icy_net/src/protocol/zmodem/rz.rs
+@@ -1,6 +1,7 @@
+ // Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): the clock, the timeout and the output file come from crate::rt (no std::time, tokio or tempfile on wasm32).
+ // Changed for enig-term (patches/icy_board/0002-zmodem-rz-detect-can-abort-in-subpacket.patch): a CAN abort inside file data ends the transfer.
+ // Changed for enig-term (patches/icy_board/0004-zmodem-host-reads-and-skips.patch): the host may refuse (skip) an offered file.
++// Changed for enig-term (patches/icy_board/0006-zmodem-rz-overlong-subpacket-is-recoverable.patch): an overlong subpacket is asked for again.
+ #![allow(clippy::unused_self, clippy::wildcard_imports)]
+ use std::{
+     cmp::Ordering,
+@@ -147,6 +148,9 @@ impl Rz {
+                             match zmodem_err {
+                                 ZModemError::SubpacketCrcError(_) => (true, "crc"),
+                                 ZModemError::InvalidSubpacket(_) => (true, "decode"),
++                                // enig-term: noise (status text on a pty) can make a subpacket
++                                // overlong: a damaged subpacket, not a fatal one.
++                                ZModemError::SubpacketOverflow(_, _) => (true, "crc"),
+                                 _ => (false, "fatal"),
+                             }
+                         } else {
+@@ -503,6 +507,9 @@ impl Rz {
+                             match zerr {
+                                 ZModemError::SubpacketCrcError(_) => (true, "crc"),
+                                 ZModemError::InvalidSubpacket(_) => (true, "decode"),
++                                // enig-term: noise (status text on a pty) can make a subpacket
++                                // overlong: a damaged subpacket, not a fatal one.
++                                ZModemError::SubpacketOverflow(_, _) => (true, "crc"),
+                                 _ => (false, "fatal"),
+                             }
+                         } else {

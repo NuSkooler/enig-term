@@ -24,7 +24,7 @@
 //   waiting. A block sent on a false start is lost that way and the receiver
 //   asks again: a 'C' or NAK while block 0 or 1 is unacknowledged means
 //   "send it again".
-import type { FileInfo, SourceFile, TransferEnd, TransferEngine, TransferEvents } from './types.ts';
+import { BOARD_LEFT, type FileInfo, type SourceFile, type TransferEnd, type TransferEngine, type TransferEvents } from './types.ts';
 
 export const SOH = 0x01;
 export const STX = 0x02;
@@ -204,6 +204,8 @@ export class XySender implements TransferEngine {
     private waitSince: number;
     private sentAt = 0;
     private pending: { byte: number; at: number } | null = null;
+    /** A 'C' while block 0 or 1 waits for its ACK: a request to send it again, once the line is quiet. */
+    private resendAt = 0;
     private trailing: Uint8Array[] = [];
     private junk = new Junk();
     private readonly ymodem: boolean;
@@ -251,6 +253,7 @@ export class XySender implements TransferEngine {
         this.cans = 0;
         const now = this.opts.now();
         let used = true;
+        if (b !== CRC_REQ) this.resendAt = 0;
         switch (this.st) {
             case 'start':
             case 'data':
@@ -264,7 +267,8 @@ export class XySender implements TransferEngine {
                     this.st = 'data';
                     this.waitSince = now;
                     this.pending = null;
-                } else if (b === NAK || b === CRC_REQ) this.resend('block 0 refused');
+                } else if (b === NAK) this.resend('block 0 refused');
+                else if (b === CRC_REQ) this.resendAt = now;
                 else used = false;
                 break;
             case 'ack':
@@ -274,7 +278,8 @@ export class XySender implements TransferEngine {
                     this.ev.progress(this.offset);
                     this.block = (this.block + 1) & 0xff;
                     this.next();
-                } else if (b === NAK || (b === CRC_REQ && this.offset === 0)) this.resend(`block ${this.block} refused`);
+                } else if (b === NAK) this.resend(`block ${this.block} refused`);
+                else if (b === CRC_REQ && this.offset === 0) this.resendAt = now;
                 else used = false;
                 break;
             case 'eot':
@@ -298,9 +303,7 @@ export class XySender implements TransferEngine {
     /** The board is drawing its screen again: the transfer program has gone. */
     private boardLeft(): void {
         this.log('the board is showing a screen again: transfer over');
-        const screen = Uint8Array.from(this.junk.bytes);
-        this.end({ ok: false, files: this.filesDone, error: 'the board ended the transfer', cancelled: 'remote' });
-        this.trailing.unshift(screen);
+        this.end({ ok: false, files: this.filesDone, error: BOARD_LEFT, cancelled: 'remote' });
     }
 
     tick(): void {
@@ -324,6 +327,10 @@ export class XySender implements TransferEngine {
             const limit = this.fileIdx === 0 && this.st === 'start' ? this.startTimeout : START_MS;
             if (now - this.waitSince > limit) this.fail(this.fileIdx === 0 && this.st === 'start' ? 'the board did not start receiving' : 'the board stopped asking for blocks');
             return;
+        }
+        if (this.resendAt && now - this.resendAt >= QUIET_MS) {
+            this.resendAt = 0;
+            if (this.st === 'ack0' || (this.st === 'ack' && this.offset === 0)) this.resend(`block ${this.st === 'ack0' ? 0 : this.block} asked for again`);
         }
         if (this.st === 'fin' && now - this.sentAt > FIN_MS) {
             // Every file was acknowledged, only the end of the batch was not:
@@ -450,6 +457,9 @@ export class XySender implements TransferEngine {
         if (!r.ok && this.inFile()) this.ev.fileEnd(false);
         this.finished = true;
         this.st = 'done';
+        // Text since the last of the protocol (status lines, the board's own) is the screen's.
+        if (this.junk.bytes.length) this.trailing.unshift(Uint8Array.from(this.junk.bytes));
+        this.junk.clear();
         this.ev.done(r);
     }
 
@@ -598,9 +608,7 @@ export class XyReceiver implements TransferEngine {
             // Not the protocol: status text on the line is skipped, but a
             // screen means the transfer program has gone.
             this.log('the board is showing a screen again: transfer over');
-            const screen = Uint8Array.from(this.junk.bytes);
-            this.end({ ok: false, files: this.filesDone, error: 'the board ended the transfer', cancelled: 'remote' });
-            this.trailing.unshift(screen);
+            this.end({ ok: false, files: this.filesDone, error: BOARD_LEFT, cancelled: 'remote' });
         }
     }
 
@@ -699,10 +707,12 @@ export class XyReceiver implements TransferEngine {
 
     private fileDone(): void {
         this.inFile = false;
-        this.ev.fileEnd(true);
-        this.filesDone++;
+        // With a size in the header, a file that ends short is not complete.
+        const whole = this.fileSize === null || this.received >= this.fileSize;
+        if (!whole) this.log(`short file: ${this.received} of ${this.fileSize} bytes`);
+        this.ev.fileEnd(whole);
+        if (whole) this.filesDone++;
         this.fileIndex++;
-        if (this.fileSize !== null && this.received < this.fileSize) this.log(`short file: ${this.received} of ${this.fileSize} bytes`);
         if (!this.ymodem) {
             this.end({ ok: true, files: this.filesDone });
             return;
@@ -784,9 +794,12 @@ export class XyReceiver implements TransferEngine {
         this.inFile = false;
         this.finished = true;
         this.st = 'done';
-        this.ev.done(r);
-        // What arrived while a write was pending, past the end, is the screen's.
+        // Text since the last block (status lines, the board's own), and what
+        // arrived while a write was pending, are the screen's.
+        if (this.junk.bytes.length) this.trailing.unshift(Uint8Array.from(this.junk.bytes));
+        this.junk.clear();
         this.trailing.push(...this.queued.splice(0));
+        this.ev.done(r);
     }
 
     takeTrailing(): Uint8Array {
