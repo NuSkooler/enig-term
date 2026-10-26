@@ -12,5 +12,8 @@
   "scale": "fit",
   "keyBar": "auto",
   "scrollback": 2000,
-  "autoReconnect": false
+  "autoReconnect": false,
+  "transfers": true,
+  "zmodemDetect": "auto",
+  "transferMaxFile": 512
 }

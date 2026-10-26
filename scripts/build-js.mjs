@@ -89,7 +89,7 @@ await build({
     logLevel: 'warning',
 }).then(r => fs.writeFileSync(path.join(root, 'build', 'meta-main.json'), JSON.stringify(r.metafile)));
 fs.copyFileSync(wasm, path.join(dist, 'enig_term_core_bg.wasm'));
-for (const f of ['index.html', 'config.example.json', 'LICENSE', 'NOTICE']) fs.copyFileSync(path.join(root, f), path.join(dist, f));
+for (const f of ['index.html', 'config.example.json', 'LICENSE', 'LICENSE-APACHE-2.0', 'NOTICE']) fs.copyFileSync(path.join(root, f), path.join(dist, f));
 
 // fonts/: the PC fonts and their manifest, licence and README. Never an
 // amiga/ directory: Amiga fonts are the operator's (tools/fetch-amiga-fonts.mjs).
@@ -180,6 +180,13 @@ themselves load <code>enig-term-ogg.js</code>: <a href="https://github.com/eshaz
 by Ethan Halsall (MIT), which compiles <a href="https://xiph.org/vorbis/">libvorbis</a> and libogg (Xiph.Org Foundation)
 and <a href="https://opus-codec.org/">libopus</a> (Xiph.Org, Skype, Octasic and others) to WebAssembly, all three
 BSD-3-Clause, with Mark Adler's puff (zlib licence). Full notices: <a href="NOTICE">NOTICE</a>.</p>
+
+<h2>File transfers</h2>
+<p>ZModem is <a href="https://github.com/mkrueger/icy_board">icy_net</a>'s (crates/icy_net in icy_board) by Mike Krueger and
+contributors, under the <a href="LICENSE-APACHE-2.0">Apache License 2.0</a>, compiled to WebAssembly with changes that are
+listed in <a href="NOTICE">NOTICE</a> (<code>enig-term-zmodem.wasm</code>, loaded for a transfer). Its constants come from
+Chuck Forsberg's ZMODEM.H (Omen Technology). XModem and YModem are enig-term's own, written from Forsberg's protocol
+reference.</p>
 
 <h2>Other</h2>
 <p>The Telnet layer is ported from the Xibalba web terminal, the author's own code, relicensed under BSD-2-Clause.</p>

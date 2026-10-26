@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased: Phase 4, file transfers
+
+- **XModem, YModem and ZModem, both ways**, as ENiGMA offers them: ZModem
+  8k through sexyz and through lrzsz, YModem and XModem through sexyz. Each
+  checked against the real program over a WebSocket, in Chromium, Firefox
+  and WebKit, through a throwaway ENiGMA (its own upload path, scan and file
+  area included) and through a fake BBS that runs lrzsz and sexyz.
+- **ZModem starts by itself**: the board's ZRQINIT or ZRINIT header is taken
+  off the stream before it is drawn (a hex header with a good CRC, also
+  across chunks). A download begins at once (`zmodemDetect: "auto"`), after a
+  yes (`"ask"`) or not at all (`"off"`); an upload asks for files. X/YModem,
+  which cannot announce themselves, start from the new **Files** panel.
+- **The transfer owns the line** while it runs: nothing is drawn, keys and
+  paste are not sent, NAWS and audio replies wait, Telnet stays underneath
+  (IAC escaped out, decoded in). Afterwards the board's text is shown; after
+  a failure, data still in flight is dropped (the abort repeated while it
+  keeps coming) and the text after it shown.
+- **Saving**: each file as it completes, as a browser download (Blob in 4 MB
+  parts, capped by `transferMaxFile`, 512 MB), or into a folder the user
+  picks where the browser allows (Chromium: streamed, no cap). A file that
+  ends short of its announced size is reported incomplete. **Uploads** read
+  the picked files a megabyte at a time; several files for the batch
+  protocols; the system's picker on phones.
+- **The transfer card**: the board's offer (Receive, Choose files, Refuse),
+  progress (file n of m, bytes, rate, time left), Cancel, the outcome with
+  Save again links; the keyboard returns to the terminal at the end.
+- **X/YModem** in TypeScript (`src/transfer/xymodem.ts`): checksum, CRC-16,
+  1K blocks, YModem batch with block 0 headers and the end-of-batch null
+  block, the double EOT, prompt answers to `C` or NAK (taken only once the
+  line is quiet: sexyz writes 'Copyright' and 'CRC-16' into the same pty),
+  a 'C' while block 0 or 1 waits meaning "again" (sexyz purges before each
+  block), status text skipped.
+- **ZModem** is icy_net's (icy_board, Apache-2.0) in a second, lazily loaded
+  WASM (`enig-term-zmodem.wasm`, about 70 KB gzipped), built from a sparse,
+  pinned checkout with six patches: the wasm32 port, and fixes found here
+  (a CAN abort inside data, ZRPOS ping-pong with lrzsz, windowed upload reads
+  and skipping refused files, text before headers, overlong subpackets). See
+  `SPIKE.md` for why icy_net and not zmodem.js.
+- **API and config**: `download()`, `upload()`, `cancelTransfer()`, `transfer`
+  and the `transfer` event; config.json `transfers`, `zmodemDetect` (a user
+  setting), `transferMaxFile`; element attributes `transfers`,
+  `zmodem-detect`, `transfer-max-file`.
+- **dist/** adds `enig-term-xfer.js` (about 8 KB gzipped, loaded for a
+  transfer), `enig-term-zmodem.wasm` and `LICENSE-APACHE-2.0`.
+- **Tests**: unit tests for the framing, CRCs, both X/YModem machines on a
+  simulated line (status text, corruption, losses) and the traps one by one;
+  X/Y/ZModem against sexyz and lrzsz over pipes (also with their status text
+  in the stream, cancel both ways, a killed sender, skipped files, 10 MB); the
+  detector; a transfer fuzzer (`npm run fuzz:xfer`); browser tests against the
+  fake BBS; and a live matrix against ENiGMA (`test/transfer-live.spec.ts`).
+
 ## Unreleased: font slots 43-45
 
 - **DCS-loaded fonts start at slot 46** (`pF = 46` in `CSI = 1 n`). The

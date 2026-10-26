@@ -37,6 +37,25 @@ icy_tools (icy_engine, icy_parser_core)
 Transitive Rust dependencies of icy_engine are listed in
 crates/enig-term-core/Cargo.lock; each is under its own (permissive) license.
 
+icy_net's ZModem (dist/enig-term-zmodem.wasm, loaded for a file transfer)
+  https://github.com/mkrueger/icy_board  crates/icy_net (pinned at
+  46461702f01ea8b7a7aef55506338db776064a14, the revision icy_tools pins)
+  By Mike Krueger and contributors. Licensed under the Apache License,
+  Version 2.0 (LICENSE-APACHE-2.0, also https://www.apache.org/licenses/LICENSE-2.0).
+  The WASM compiles icy_net's src/crc.rs, src/connection/mod.rs and
+  src/protocol/{mod.rs, transfer_state.rs, zmodem/*} from that revision with
+  patches/icy_board/*.patch applied; every file a patch changes says so at
+  its top. The changes: a wasm32 port (no transports, X/YModem or Kermit;
+  clock, timeouts and file I/O from crates/enig-term-zmodem/src/rt.rs), a
+  CAN abort inside file data ends the transfer, a repeated ZRPOS within a
+  second is ignored, file data is awaited from the host and an offered file
+  may be skipped, text before a header is skipped by the sender, and an
+  overlong subpacket is asked for again. zmodem/constants.rs carries the
+  comment that its constants were taken from Omen Technology's ZMODEM.H
+  (Chuck Forsberg, 1989-1991). The wrapper (crates/enig-term-zmodem/src)
+  is enig-term's own (BSD-2-Clause). Its Rust dependencies are listed in
+  crates/enig-term-zmodem/Cargo.lock, each under its own permissive license.
+
 PC fonts (fonts/: manifest.json, pc/*.psf)
   Derived from "The Ultimate Oldschool PC Font Pack" v2.2 by VileR,
   https://int10h.org/oldschool-pc-fonts/ , licensed under the Creative
@@ -63,8 +82,8 @@ browsers that cannot decode Ogg themselves; built from src/audio/ogg.ts):
 
   @eshaz/web-worker 1.2.2 (its browser entry, a one-line re-export of the
   global Worker), https://github.com/eshaz/web-worker
-  Copyright 2020 Google LLC. Licensed under the Apache License, Version 2.0,
-  https://www.apache.org/licenses/LICENSE-2.0
+  Copyright 2020 Google LLC. Licensed under the Apache License, Version 2.0
+  (LICENSE-APACHE-2.0, also https://www.apache.org/licenses/LICENSE-2.0).
 
   libvorbis and libogg, https://xiph.org/  Copyright (c) 2002-2020 Xiph.Org
   Foundation. libopus, https://opus-codec.org/  Copyright 2001-2023 Xiph.Org,

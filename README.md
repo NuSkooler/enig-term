@@ -7,14 +7,16 @@ input, scrollback, selection, links, UI) and a WebGL2 output pass with sharp
 scaling, 4:3 aspect correction and an optional CRT effect (2D-canvas
 fallback).
 
-Status: **Phase 3 (audio)**, version 0.1.0, not released. See
-`CHANGELOG.md`, and `SPIKE.md` for the Phase 0 measurements behind the design.
+Status: **Phase 4 (file transfers)**, version 0.1.0, not released. See
+`CHANGELOG.md`, and `SPIKE.md` for the Phase 0 measurements behind the design
+and the Phase 4 ZModem comparison.
 
 - [Build](#build) · [Test](#test) · [dist/ layout](#dist-layout) ·
   [Standalone page](#standalone-page) · [config.json v1](#configjson-v1) ·
   [Embedding](#embedding) · [Settings](#settings) · [Keyboard](#keyboard) ·
   [Fonts](#fonts) · [Amiga profile](#amiga-profile) · [Audio](#audio) ·
-  [Behaviour notes](#behaviour-notes) · [Licences](#licences)
+  [File transfers](#file-transfers) · [Behaviour notes](#behaviour-notes) ·
+  [Licences](#licences)
 
 ## Build
 
@@ -27,7 +29,7 @@ Toolchain:
 
 ```sh
 npm install
-npm run build        # build:wasm (cargo, wasm-bindgen, wasm-opt -Oz) then build:js (esbuild -> dist/)
+npm run build        # build:wasm (cargo, wasm-bindgen, wasm-opt -Oz; both modules) then build:js (esbuild -> dist/)
 npm run serve        # http://127.0.0.1:8090/ serves dist/ (see "Development server")
 ```
 
@@ -53,6 +55,16 @@ crate with macros that yield empty data, makes `BitFont::from_bytes` refuse
 empty data, and turns the unwraps on built-in fonts into a blank placeholder.
 The shell loads the fonts it ships instead (see [Fonts](#fonts)).
 
+**ZModem is a second WASM module**, `crates/enig-term-zmodem`, loaded only
+for a transfer. It compiles icy_net's ZModem (icy_board's `crates/icy_net`,
+Apache-2.0) straight from `build/icy_board/`, which `prepare-icy.sh` checks
+out sparsely (only `crates/icy_net`, about 2 MB; `ICY_BOARD_GIT=` for a local
+clone) at the revision in that crate's `Cargo.toml`
+(`[package.metadata.enig-term] icy-board-rev`, the one icy_tools pins for
+icy_net), with `patches/icy_board/*.patch` applied. The crate's own files are
+the wrapper (`src/lib.rs`) and the platform shims (`src/rt.rs`); see
+[File transfers](#file-transfers) for what the six patches change.
+
 ### Rebasing icy_tools
 
 1. Change both `rev = "..."` values in `crates/enig-term-core/Cargo.toml`.
@@ -67,6 +79,14 @@ The shell loads the fonts it ships instead (see [Fonts](#fonts)).
 4. Regenerate the screen wrapper with `python3 scripts/gen-delegate.py build/icy_tools`.
 5. `npm run build`, `npm test`; after checking the screenshots, `npm run goldens`.
 
+icy_board (ZModem) the same way: change `icy-board-rev` in
+`crates/enig-term-zmodem/Cargo.toml` (to what the new icy_tools pins for
+icy_net), run `scripts/prepare-icy.sh`, and fix any patch that no longer
+applies in `build/icy_board/`. Patches apply in order, so regenerate one
+against a checkout with the earlier ones committed (`prepare-icy.sh` rebuilds
+the checkout whenever a patch changes, which drops such commits). Then
+`npm run build` and `npm test` (the ZModem unit tests run lrzsz and sexyz).
+
 ## Test
 
 ```sh
@@ -75,12 +95,23 @@ npm run test:unit    # core (WASM) and shell tests in Node
 npm run test:browser # Playwright: chromium, webkit, firefox, Pixel 7, iPhone 14
 npm run fuzz -- 60   # feed fuzzer for N seconds (optional seed as 2nd argument)
 npm run fuzz:audio -- 30   # audio fuzzer: APC strings, CSI = 7, music through core and engine
+npm run fuzz:xfer -- 30    # transfer fuzzer: mutated X/Y/ZModem sessions into every engine
 FFMPEG=... npm run fixtures:audio   # regenerate test/fixtures/audio/ and src/audio/probes.ts (rarely)
 ENIG_TERM_LIVE_WS=ws://127.0.0.1:18810 npm run test:live            # a throwaway ENiGMA
 ENIG_TERM_LIVE_PAGE=http://127.0.0.1:18080/_enig/ws-term/ npm run test:live   # through ENiGMA's route
+ENIG_TERM_LIVE_XFER=ws://127.0.0.1:18910 ENIG_TERM_LIVE_XFER_DIR=<its scratch tree> npx playwright test test/transfer-live.spec.ts
 npm run fonts:amiga  # optional: install the Amiga fonts into test/amiga-fonts/ (gitignored)
 npm run fonts -- <oldschool_pc_font_pack_v2.2_FULL.zip>   # regenerate fonts/ (rarely)
 ```
+
+The transfer tests run the real transfer programs where they are installed
+and skip them otherwise: Synchronet's `sexyz` (on `PATH`, in
+`~/.local/bin`, or `ENIG_TERM_SEXYZ=`) and lrzsz (`sz`, `rz`, `sx`, `rx`, `sb`,
+`rb`). In Node they run over pipes (`test/xymodem.test.mjs`,
+`test/zmodem.test.mjs`); in the browsers the fake BBS runs them over the
+WebSocket as ENiGMA does (`test/transfer.spec.ts`). The live matrix
+(`test/transfer-live.spec.ts`) needs a throwaway ENiGMA prepared as its
+header describes.
 
 Tests that need the Amiga fonts (a Topaz test card, the explicit Amiga
 profile's font, the fetch script's offline round trip) skip when
@@ -139,11 +170,13 @@ route serves it as is, so this layout is a contract:
 | `enig_term_core_bg.wasm` | The engine. Loaded from next to `enig-term.js` (resolved from `import.meta.url`), as `enig_term_core_bg.wasm?v=<16 hex digits of its SHA-256>`, so a bundle never pairs with a different WASM even though file names carry no hash. |
 | `enig-term-audio.js` | The audio engine (CTerm audio, "ANSI" music, the file cache), an ES module the bundle imports from next to itself (`?v=<hash>`) the first time a board uses audio. |
 | `enig-term-ogg.js` | Ogg Vorbis and Opus decoders (WebAssembly inside), imported by the engine only when the browser cannot decode an Ogg file itself. |
+| `enig-term-xfer.js` | The transfer engines (X/YModem, the ZModem driver), imported (`?v=<hash>`) the first time a transfer starts. |
+| `enig-term-zmodem.wasm` | ZModem (icy_net), fetched by `enig-term-xfer.js` from next to itself (`?v=<hash>`) for a ZModem transfer. Serve as `application/wasm`. |
 | `fonts/` | `manifest.json` (SyncTERM slot -> file, code page, source, licence), `pc/*.psf` (48 PSF2 fonts, about 157 KB), and their `LICENSE` (CC BY-SA 4.0) and `README.txt`. Fetched lazily from next to `enig-term.js`: the manifest as `manifest.json?v=<16 hex digits of its SHA-256>` (stamped into the bundle), each font as `<file>?v=<16 hex digits of its own SHA-256>`, so all of it can be cached for good. |
 | `fonts/amiga/` | **Not shipped.** Created by the operator with `tools/fetch-amiga-fonts.mjs` (see [Amiga fonts](#amiga-fonts)). Its manifest is fetched with revalidation. The build fails if it appears in `dist/`. |
 | `tools/fetch-amiga-fonts.mjs` | The operator's Amiga font installer (Node 18+, no dependencies, no root). |
 | `credits.html` | Credits and licences (enig-term, icy_tools, the PC font table, the Amiga font source, palette sources). Linked from the Settings panel. |
-| `LICENSE`, `NOTICE` | BSD-2-Clause, and the third-party notices (icy_tools, fonts). |
+| `LICENSE`, `NOTICE`, `LICENSE-APACHE-2.0` | BSD-2-Clause, the third-party notices (icy_tools, icy_net, fonts, decoders), and the Apache License 2.0 text (icy_net). |
 | `config.example.json` | A commented-by-example `config.json` v1. |
 
 There is no CSS file (styles live in the shadow root) and **no
@@ -164,6 +197,7 @@ parameters (standalone page only) override `config.json`:
 | `amigaPalette=ncomm\|term-ega`, `amigaAspect=pal\|ntsc\|<1-3>`, `amigaRows=` | the same |
 | `cols=`, `rows=`, `scrollback=`, `renderer=webgl2\|2d`, `autoReconnect=0/1` | the same |
 | `mute=0/1`, `volume=0-100`, `musicTone=square\|syncterm\|sine` | the same |
+| `zmodemDetect=auto\|ask\|off` | the same |
 
 Test hooks, never on by default: `naws=0` (refuse NAWS, so a host falls back
 to `CSI 255 n`), `debugDa=cterm` (answer DA as CTerm, for ENiGMA builds that
@@ -220,6 +254,9 @@ invalid values are dropped with a console warning. ENiGMA generates
 | `audioCache` | integer (MB) | `64` | Board sounds kept in IndexedDB, all boards together (LRU); `0`: none kept (files last until the page closes). |
 | `audioMaxFile` | integer (MB) 1-64 | `16` | Largest sound file a board may store, load or send. |
 | `audioMemory` | integer (MB) 16-2048 | `192` | Decoded audio held at once (slots and channels). |
+| `transfers` | boolean | `true` | File transfers ([File transfers](#file-transfers)): the Files button and ZModem detection. `false`: none (a board's ZModem start shows as text). |
+| `zmodemDetect` | `"auto"`, `"ask"` or `"off"` | `"auto"` | A ZModem download the board starts: begins at once, asks first, or is ignored (its bytes show as text). An upload the board starts always asks for files (unless `off`). A user setting. |
+| `transferMaxFile` | integer (MB) 1-4096 | `512` | Largest file saved through a browser download; a larger one is refused (ZModem skips it, X/YModem stop). A folder the user picked has no limit. |
 
 Example: `config.example.json`.
 
@@ -248,13 +285,15 @@ Attributes: `config` (URL of a `config.json`, relative to the page),
 `profile`, `scrollback`, `crt`, `aspect`, `scale`, `keybar`, `toolbar`,
 `persist`, `url-params`, `renderer`, `blink`, `auto-reconnect`,
 `backspace`, `fonts`, `amiga-fonts`, `amiga-palette`, `amiga-aspect`,
-`amiga-rows`, `sound`, `mute`, `volume`, `music-tone`, and `fill` (fit the
+`amiga-rows`, `sound`, `mute`, `volume`, `music-tone`, `transfers`,
+`zmodem-detect`, `transfer-max-file`, and `fill` (fit the
 element's height too; give it a height).
 Booleans: present, `on`, `true` or `1` is on; `off`, `false` or `0` is off.
 `endpoint`, `title`, `crt`, `aspect`, `scale`, `keybar`, `toolbar`,
 `auto-reconnect`, `backspace`, `blink`, `scrollback`, `profile`,
-`amiga-palette`, `amiga-aspect`, `amiga-rows`, `mute`, `volume` and
-`music-tone` also apply when changed later. The element has `ready` (a promise of the handle), `handle`,
+`amiga-palette`, `amiga-aspect`, `amiga-rows`, `mute`, `volume`,
+`music-tone`, `transfers`, `zmodem-detect` and `transfer-max-file` also apply
+when changed later. The element has `ready` (a promise of the handle), `handle`,
 `connect()` and `disconnect()`.
 
 ```js
@@ -273,8 +312,11 @@ Handle: `connect(endpoint?)`, `disconnect()`, `setOption(key, value)`,
 `send(text)`, `paste(text)`, `write(data)` (as if from the host),
 `copySelection()`, `focus()`, `resize(cols, rows)`, `toggleFullscreen()`,
 `soundState`, `enableSound()` (from a user gesture: your own "enable sound"
-control), `clearSoundCache()`, `state`, `version`, `destroy()`, and
-`terminal` (internals; not stable).
+control), `clearSoundCache()`, `download(protocol?, name?)` and
+`upload(files, protocol?)` (protocol `"zmodem"` by default, `"ymodem"` or
+`"xmodem"`; files from an `<input type=file>`), `cancelTransfer()`,
+`transfer` (the current or last transfer's status), `state`, `version`,
+`destroy()`, and `terminal` (internals; not stable).
 
 Events (on the handle, and as DOM `CustomEvent`s on `<enig-term>` with the
 event object as `detail`):
@@ -291,6 +333,7 @@ event object as `detail`):
 | `selection` | `{ text }` |
 | `profile` | `{ profile, setting }`: the look in effect changed (`pc` or `amiga`; `setting` is the configured `auto`/`pc`/`amiga`) |
 | `sound` | `{ state }`: `off` (disabled or unsupported), `idle` (no audio yet), `locked` (the board plays sound; waiting for a gesture), `on`, `muted` |
+| `transfer` | `{ phase, direction, protocol, file, fileBytes, totalBytes, doneBytes, rate, eta, files, skipped, error, message }`: `phase` is `idle`, `armed` (prepared, waiting for the board), `offer` (the board started ZModem, waiting for the user), `loading`, `running`, `done`, `failed` or `cancelled`; `files` lists the files finished (`{ name, size, ok, url?, where }`) |
 
 Isolation: everything lives in an open shadow root. The page's CSS does not
 reach in (inherited properties are reset at the root), and nothing is added
@@ -304,12 +347,13 @@ The Settings panel holds the user-settable keys, saved per origin in
 `localStorage` (`enig-term:settings:v1`; every access is guarded, and the
 terminal works without storage): `crt`, `aspect`, `scale`, `keyBar`,
 `autoReconnect`, `backspace`, `profile` ("Look": Auto, PC, Amiga),
-`amigaPalette`, `amigaAspect`, `mute`, `volume`, `musicTone` (and `sharp`
-through the API), plus **Clear sound cache**. Keys in the
+`amigaPalette`, `amigaAspect`, `mute`, `volume`, `musicTone`, `zmodemDetect`
+(in the Files panel) (and `sharp` through the API), plus **Clear sound
+cache**. Keys in the
 config's `lock` are shown disabled. The panel links to the credits page.
 The toolbar also has the host input,
 Connect/Disconnect/Reconnect, Copy, Paste, Sound (mute) with a volume
-slider, and Full screen (an iPhone, which
+slider, Files ([File transfers](#file-transfers)), and Full screen (an iPhone, which
 has no element fullscreen, gets a viewport-covering mode instead).
 
 ## Keyboard
@@ -330,6 +374,11 @@ has no element fullscreen, gets a viewport-covering mode instead).
 Typed and pasted text is encoded as CP437, or as Latin-1 while an Amiga font
 (SyncTERM 37-42) is active. Characters with no encoding become `?`. Line
 breaks become CR. Paste goes out in 256-byte chunks, 10 ms apart.
+
+While a file transfer runs (and for the moment after a failed one while the
+board's program winds down), keys, the key bar and paste send nothing (it
+would land in the protocol); the transfer card's buttons still work, and the
+keyboard is the terminal's again when it ends.
 
 Shortcuts the terminal keeps: **Shift+PgUp / Shift+PgDn** (scrollback),
 **Ctrl+Shift+C** or **Ctrl+Insert** (copy), **Ctrl+C with a selection**
@@ -636,6 +685,125 @@ Vorbis end padding; WebKitGTK decodes a WAV whose data chunk has an odd
 length (8- or 24-bit with an odd sample count) as empty, which enig-term
 treats as a failed decode.
 
+## File transfers
+
+XModem, YModem and ZModem, both ways, as ENiGMA offers them
+(`fileTransferProtocols` in its `config_default.js`), each checked against the
+real program behind it (see [Test](#test)):
+
+| ENiGMA protocol | The board runs (download / upload) | In enig-term |
+|---|---|---|
+| ZModem 8k (SEXYZ), `zmodem8kSexyz` | `sexyz -telnet -8 sz @list` / `sexyz -telnet -8 rz <dir>` | ZModem: starts by itself |
+| ZModem 8k, `zmodem8kSz` | lrzsz `sz --zmodem --try-8k --binary --restricted` / `rz --zmodem --binary --restricted` | ZModem: starts by itself |
+| YModem (SEXYZ), `ymodemSexyz` | `sexyz -telnet sY @list` (1K blocks) / `sexyz -telnet ry <dir>` | YModem batch, from the Files panel |
+| XModem (SEXYZ), `xmodemSexyz` | `sexyz -telnet sX @list` (1K blocks) / `sexyz -telnet rC <file>` | XModem (checksum, CRC-16, 1K), from the Files panel |
+
+ENiGMA offers no YModem-G, and enig-term has none.
+
+**Downloading.** Pick the files on the board and start its download.
+
+- *ZModem* starts by itself: the board's `sz` announces it (a ZRQINIT header,
+  which the terminal takes off the stream before it is drawn), and receiving
+  begins. `zmodemDetect: "ask"` shows the card first (Receive or Refuse);
+  `"off"` leaves it alone (its bytes then show as text). Files → Download →
+  ZModem → "Wait for the board" does the same for one transfer when detection
+  is off.
+- *YModem and XModem* cannot announce themselves: start the download on the
+  board first (its sender waits about 100 s), then Files → Download → the
+  protocol → Receive. Started the other way round, the receiver's first `C`
+  would reach the board's menu as a keystroke. XModem carries no file name:
+  the panel's "Save as" names it (`download.bin`). XModem pads the last block
+  with SUB (0x1A) to 128 bytes and the file keeps that padding, as sexyz's and
+  lrzsz's receivers do.
+- Each file is saved the moment it is complete, under the name the board
+  sent (path parts and control characters removed), as a browser download (the
+  browser may ask once before several). A Chromium browser can instead save
+  into a folder (Files → "Save into a folder…", asked once per page): written
+  as it arrives, with no size limit. Otherwise a file is kept as Blobs (4 MB
+  parts, which a browser may move to disk) until it is complete, and one
+  larger than `transferMaxFile` (512 MB) is refused: ZModem skips just that
+  file, X/YModem stop. A file that ends short of the size the board announced
+  (YModem's header, ZModem's ZFILE) is reported incomplete and not saved.
+
+**Uploading.**
+
+- *ZModem*: start the upload on the board; its receiver announces itself
+  (ZRINIT) and the card asks for files (Choose files…; the system's picker,
+  also on iOS and Android; several files). Or prepare it: Files → Upload →
+  ZModem → Choose files → "Send when the board is ready".
+- *YModem and XModem*: Files → Upload → the protocol → Choose files (one, for
+  XModem) → Send, and start the upload on the board within a minute (or the
+  board first: its receiver asks every 3 s and gives up after about 30).
+  ENiGMA's XModem upload is its "supply filename" upload.
+- Files are read a megabyte at a time (one ahead), never whole.
+
+**While a transfer runs** the card over the screen shows the file (n of m),
+bytes, rate, time left and a Cancel button. The stream belongs to the
+protocol: nothing is drawn, keys and paste are not sent, and a resize's NAWS
+and audio replies wait until it ends. Telnet stays underneath: the terminal
+escapes IAC (0xFF) going out and decodes it coming in (`sexyz -telnet` does
+the same on its side; ENiGMA does it for lrzsz). On a board the transfer
+program runs on a pty, so its status text is in the stream with the
+protocol (sexyz's banner and progress lines, lrzsz's "rz waiting to
+receive."); the engines skip it, and what follows the last of the protocol
+goes back to the screen.
+
+**How it ends.**
+
+- Done: the card lists the files (with Save again links) and closes after a
+  few seconds; the board's next screen shows as usual.
+- Cancel: X/YModem send ten CANs and ten backspaces; ZModem its abort
+  sequence. Data the board had already sent is dropped until the line is
+  quiet; while protocol data keeps coming (lrzsz's `sz` can notice an abort
+  late) the abort goes out again, up to ten times. Then the text that
+  followed is shown. Keys wait for that too. Refusing the board's offer
+  drains the same way, so a header it repeats does not start another offer.
+- The board cancels (CAN): the transfer fails. When the board's program dies
+  instead and the board draws its menu again (ANSI sequences where the
+  protocol should be), the transfer ends and that screen is shown; otherwise
+  ZModem gives up after 60 s without traffic and X/YModem after their retries
+  (ten of 10 s). A closed connection ends a transfer at once.
+
+**Speed.** ZModem streams. X/YModem wait for an acknowledgement after every
+block (1 KB), so they run at one block per round trip: fast on a near line,
+about 20 KB/s at 50 ms. (Playwright's Chromium on the development host takes
+50-200 ms per WebSocket round trip, Firefox and WebKit about 1 ms; real
+browsers were not measured.)
+
+**Known limits.**
+
+- sexyz cannot send an empty file with ZModem: it refuses the receiver's
+  ZRPOS 0 ("Received INVALID ZRPOS offset: 0"), against lrzsz's `rz` too.
+  The transfer fails cleanly; lrzsz's ZModem and sexyz's YModem send empty
+  files.
+- XModem cannot tell a file cut short at a block boundary from a shorter
+  file; YModem and ZModem can (the size is announced).
+- No resume of partial downloads (a browser cannot append to a saved file).
+
+**How it is built.** XModem and YModem are TypeScript state machines
+(`src/transfer/xymodem.ts`) written from Forsberg's protocol reference and
+checked against sexyz and lrzsz. ZModem is icy_net's (icy_board,
+Apache-2.0), compiled to `enig-term-zmodem.wasm` (about 70 KB gzipped) behind a
+polling wrapper (`crates/enig-term-zmodem`; `src/transfer/zmodem.ts` drives
+it, with an inactivity timeout and the board-left check). The patches in
+`patches/icy_board/`, each marked in the files it changes:
+
+| Patch | What |
+|---|---|
+| 0001 | The wasm32 port: no transports, no X/YModem or Kermit; clock, sleep, timeouts, the file reader and the output file come from the wrapper. |
+| 0002 | A CAN abort inside file data ends the transfer (it was skipped as noise and the receiver hung). |
+| 0003 | A repeated ZRPOS for the same offset within a second is ignored (lrzsz repeats it; icy_net restarted each time and the two sides ping-ponged until `rz` gave up). |
+| 0004 | Upload data is awaited from the host a window at a time; the host may refuse (ZSKIP) an offered file. |
+| 0005 | The sender skips text before a header (status text on the board's pty) instead of failing after three bytes of it. |
+| 0006 | An overlong data subpacket (text spliced into it) is asked for again (ZRPOS) instead of failing the transfer. |
+
+The ZModem start detector is `src/transfer/detect.ts`, the stream handover and
+saving `src/transfers.ts` and `src/transfer/save.ts`. `npm run fuzz:xfer`
+mutates recorded sessions (flipped bytes, CAN and ZDLE runs, status text,
+screens, cuts, repeats) into every engine with a jumping clock: each must end,
+never throw, never deliver past its limit, and a file it calls complete must
+be byte-identical; the unit tests run a fixed-seed pass.
+
 ## Behaviour notes
 
 - **Scrollback** is cells, not pixels: lines leaving the top of the screen
@@ -712,5 +880,8 @@ only. Amiga fonts are not distributed; see [Amiga fonts](#amiga-fonts). The
 Amiga palettes are numbers taken from NComm and Term (cited in
 `src/palettes.ts`), no code. `enig-term-ogg.js` contains wasm-audio-decoders
 (MIT) with libvorbis, libogg and libopus (BSD-3-Clause) and puff (zlib);
-see `NOTICE`. The audio test fixtures are generated tones. `credits.html` in `dist/` lists all of this for
+see `NOTICE`. `enig-term-zmodem.wasm` is icy_net's ZModem (icy_board, by Mike
+Krueger and contributors, **Apache-2.0**, `LICENSE-APACHE-2.0`) with the
+changes listed under [File transfers](#file-transfers); the patched files say
+so. The audio test fixtures are generated tones. `credits.html` in `dist/` lists all of this for
 users.
