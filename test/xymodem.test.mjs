@@ -242,6 +242,29 @@ test('sender: a C inside status text is not a request; a C or NAK followed by si
     assert.ok(!m.out.includes(CAN));
 });
 
+test('sender: the board drawing its screen after the end-of-batch block is a success, before it a failure', () => {
+    const screen = '\x1b[2J\x1b[1;1H\x1b[0;1mScanning\x1b[0m\x1b[5;5H...';
+    const ev = sink().ev;
+    const m = manual((send, now) => new XySender('ymodem', [src('a.bin', enc('x'))], send, ev, { now }));
+    m.feed([CRC_REQ]);
+    m.wait(200);
+    m.feed([ACK, CRC_REQ]);
+    m.wait(200);
+    m.feed([ACK]);
+    m.feed([NAK]);
+    m.feed([ACK, CRC_REQ]);
+    m.wait(200); // the null block goes out
+    m.feed(screen); // no ACK for it: sexyz exited, the board moved on
+    assert.equal(ev.result?.ok, true);
+    assert.equal(new TextDecoder().decode(m.e.takeTrailing()), screen, 'the screen is the terminal\'s');
+    const ev2 = sink().ev;
+    const m2 = manual((send, now) => new XySender('ymodem', [src('a.bin', enc('x'))], send, ev2, { now }));
+    m2.feed([CRC_REQ]);
+    m2.wait(200);
+    m2.feed(screen);
+    assert.deepEqual([ev2.result?.ok, ev2.result?.cancelled], [false, 'remote']);
+});
+
 test('sender: resends on NAK and on silence, gives up after too many errors with CAN', () => {
     const ev = sink().ev;
     const m = manual((send, now) => new XySender('xmodem', [src('a.bin', enc('x'.repeat(200)))], send, ev, { now }));

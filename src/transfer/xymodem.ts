@@ -302,6 +302,14 @@ export class XySender implements TransferEngine {
 
     /** The board is drawing its screen again: the transfer program has gone. */
     private boardLeft(): void {
+        if (this.st === 'fin') {
+            // Every file was acknowledged and the batch's end sent: the board
+            // has moved on (sexyz exits right after the null block, and its
+            // ACK can be lost on the way out).
+            this.log('the board is showing a screen after the end of the batch: done');
+            this.end({ ok: true, files: this.filesDone });
+            return;
+        }
         this.log('the board is showing a screen again: transfer over');
         this.end({ ok: false, files: this.filesDone, error: BOARD_LEFT, cancelled: 'remote' });
     }
