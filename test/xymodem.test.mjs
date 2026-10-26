@@ -499,3 +499,14 @@ test('sexyz sY -> us, the board aborts mid-file (SIGINT): we stop with a remote 
     assert.ok(!res.result.hung, 'the receiver did not hang');
     assert.equal(r.files.at(-1)?.ok, false, 'the partial file is reported as abandoned');
 });
+
+test('receiver: a screen after more than 64 KB of noise is still the one shown', () => {
+    const ev = sink().ev;
+    const m = manual((send, now) => new XyReceiver('ymodem', send, ev, { now }));
+    m.feed(new Array(200_000).fill(0x2e)); // text that is not the protocol
+    m.feed('\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: ');
+    assert.equal(ev.result?.error, BOARD_LEFT);
+    const rest = m.e.takeTrailing();
+    assert.ok(rest.length <= 65536 + 64, `kept ${rest.length} bytes`);
+    assert.ok(new TextDecoder().decode(rest).endsWith('\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: '), 'the whole screen');
+});

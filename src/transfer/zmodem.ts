@@ -148,7 +148,9 @@ export class ZmodemEngine implements TransferEngine {
     private watch(bytes: Uint8Array): void {
         for (let i = 0; i < bytes.length; i++) {
             const b = bytes[i];
-            if (this.win.length < WINDOW_MAX) this.win.push(b);
+            // The newest bytes are kept: a screen comes at the end.
+            this.win.push(b);
+            if (this.win.length >= 2 * WINDOW_MAX) this.win.splice(0, this.win.length - WINDOW_MAX);
             if (this.esc && b === 0x5b) this.csi++;
             this.esc = b === 0x1b;
         }
@@ -164,7 +166,7 @@ export class ZmodemEngine implements TransferEngine {
 
     private boardLeft(): void {
         this.log('the board is showing a screen again: transfer over');
-        const screen = Uint8Array.from(this.win);
+        const screen = Uint8Array.from(this.win.slice(-WINDOW_MAX));
         this.alive();
         this.out(boardLeftAbort(this.sent));
         this.guard(s => s.take_input()); // part of the screen, kept above

@@ -169,6 +169,8 @@ export function parseYmodemHeader(data: Uint8Array): YHeader | null {
  * evidently gone and the board is drawing its menu again. Those bytes are
  * the screen's, so they are kept (bounded) to hand back.
  */
+const JUNK_MAX = 65536;
+
 class Junk {
     bytes: number[] = [];
     /** Bytes this side sent since the protocol was last heard. */
@@ -177,10 +179,16 @@ class Junk {
     private csi = 0;
     /** Returns true when the board looks to be drawing a screen again. */
     add(b: number): boolean {
-        if (this.bytes.length < 65536) this.bytes.push(b);
+        // The newest bytes are kept: a screen comes at the end.
+        this.bytes.push(b);
+        if (this.bytes.length >= 2 * JUNK_MAX) this.bytes.splice(0, this.bytes.length - JUNK_MAX);
         if (this.esc && b === 0x5b) this.csi++;
         this.esc = b === 0x1b;
         return this.csi >= 4;
+    }
+    /** The newest bytes (a screen, when the board has moved on). */
+    take(): Uint8Array {
+        return Uint8Array.from(this.bytes.slice(-JUNK_MAX));
     }
     clear(): void {
         this.bytes.length = 0;
@@ -485,7 +493,7 @@ export class XySender implements TransferEngine {
         this.finished = true;
         this.st = 'done';
         // Text since the last of the protocol (status lines, the board's own) is the screen's.
-        if (this.junk.bytes.length) this.trailing.unshift(Uint8Array.from(this.junk.bytes));
+        if (this.junk.bytes.length) this.trailing.unshift(this.junk.take());
         this.junk.clear();
         this.ev.done(r);
     }
@@ -838,7 +846,7 @@ export class XyReceiver implements TransferEngine {
         this.st = 'done';
         // Text since the last block (status lines, the board's own), and what
         // arrived while a write was pending, are the screen's.
-        if (this.junk.bytes.length) this.trailing.unshift(Uint8Array.from(this.junk.bytes));
+        if (this.junk.bytes.length) this.trailing.unshift(this.junk.take());
         this.junk.clear();
         this.trailing.push(...this.queued.splice(0));
         this.ev.done(r);

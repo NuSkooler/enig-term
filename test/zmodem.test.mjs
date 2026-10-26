@@ -229,3 +229,21 @@ test('receiving: the board drawing its screen again ends the transfer; the heade
     assert.deepEqual(out.slice(sent), Array.from(boardLeftAbort(sent)));
     assert.equal(new TextDecoder().decode(e.takeTrailing()).endsWith('cmd: '), true, 'the screen is the terminal\'s');
 });
+
+test('receiving: a screen after more than 64 KB of noise is still the one shown', async () => {
+    let t = 0;
+    let result = null;
+    const e = new ZmodemEngine('receive', [], () => {}, { ...quiet(), done: r => (result = r) }, { now: () => t });
+    e.feed(enc('**\x18B00000000000000\r\x8a\x11')); // ZRQINIT
+    await new Promise(r => setTimeout(r, 20));
+    e.tick();
+    e.feed(new Uint8Array(200_000).fill(0x15)); // what is left of a stream cut off mid-file (no header in it)
+    e.feed(enc('\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: '));
+    t += 3100;
+    e.tick();
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(result?.error, BOARD_LEFT);
+    const rest = e.takeTrailing();
+    assert.ok(rest.length <= 65536 + 64, `kept ${rest.length} bytes`);
+    assert.ok(new TextDecoder().decode(rest).endsWith('\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: '), 'the whole screen, at the end');
+});

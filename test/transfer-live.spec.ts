@@ -66,8 +66,14 @@ async function keys(page: Page, ...ks: string[]) {
 
 const phase = (page: Page) => page.evaluate(() => (window as any).enigTerm.transfers.status.phase as string);
 const status = (page: Page) => page.evaluate(() => (window as any).enigTerm.transfers.status);
-async function finished(page: Page, timeout = 120_000) {
-    await expect.poll(() => phase(page), { timeout }).toMatch(/done|failed|cancelled/);
+/** The end of a transfer; with `prev` (the status before it), not the last one's that is still shown. */
+async function finished(page: Page, timeout = 120_000, prev?: string) {
+    await expect
+        .poll(async () => {
+            const st = await status(page);
+            return prev !== undefined && JSON.stringify(st) === prev ? 'previous' : st.phase;
+        }, { timeout })
+        .toMatch(/done|failed|cancelled/);
     return status(page);
 }
 const ui = (page: Page, sel: string) => page.locator('enig-term').locator(sel);
@@ -137,6 +143,7 @@ async function download(page: Page, proto: string, set: string, opts: { panel?: 
     // (Nothing to clear first: when a transfer ends because the board left,
     // the engine rubs out what reached its prompt as typing. ENiGMA keeps an
     // unknown command in the field, so leftovers would break the next one.)
+    const prev = JSON.stringify(await status(page));
     await keys(page, `D${proto}-${set.toUpperCase()}`, 'Enter');
     if (opts.panel) {
         // X/YModem cannot announce themselves: the user starts receiving once the board is sending.
@@ -147,7 +154,13 @@ async function download(page: Page, proto: string, set: string, opts: { panel?: 
         await ui(page, '[data-act="xf-start"]').click();
     }
     if (opts.cancelAt || opts.killAt) {
-        await expect.poll(async () => (await status(page)).fileBytes, { timeout: 60_000 }).toBeGreaterThan(opts.cancelAt ?? opts.killAt!);
+        // (This transfer's: the last one's status stays until a new one starts.)
+        await expect
+            .poll(async () => {
+                const st = await status(page);
+                return st.phase === 'running' ? st.fileBytes : 0;
+            }, { timeout: 60_000 })
+            .toBeGreaterThan(opts.cancelAt ?? opts.killAt!);
         if (opts.cancelAt) await page.evaluate(() => (document.querySelector('enig-term')!.shadowRoot!.querySelector('[data-act="xf-cancel"]') as HTMLElement).click());
         // The board's program: lrzsz's sz names the file; sexyz gets a list file.
         else {
@@ -157,11 +170,11 @@ async function download(page: Page, proto: string, set: string, opts: { panel?: 
                 // Nothing to kill: the program had already written the whole file
                 // into the board's buffers (ZModem streams) and exited.
                 log(`download ${proto} ${set}: the program had already finished; no abort`);
-                return { st: await finished(page, 600_000), dl, killed: false };
+                return { st: await finished(page, 600_000, prev), dl, killed: false };
             }
         }
     }
-    const st = await finished(page, 600_000);
+    const st = await finished(page, 600_000, prev);
     log(`download ${proto} ${set}: ${st.phase} ${st.error ?? ''} ${JSON.stringify(st.files.map((f: any) => [f.name, f.size, f.ok]))}`);
     return { st, dl, killed: true };
 }
@@ -267,6 +280,13 @@ test.describe('live ENiGMA transfers', () => {
     test.beforeEach(async ({}, ti) => {
         logFile = path.join(SHOTS, `live-xfer-${ti.project.name}.log`);
         log(`--- ${ti.title}`);
+    });
+
+    // A failure: the terminal's own log (transfer engine lines included) goes into ours.
+    test.afterEach(async ({ page }, ti) => {
+        if (ti.status === ti.expectedStatus) return;
+        const lines = await page.evaluate(() => ((window as any).enigTerm?.log as string[] | undefined)?.slice(-80) ?? []).catch(() => []);
+        for (const l of lines) log(`  terminal: ${l}`);
     });
 
     // --- downloads: every protocol ENiGMA offers -------------------------------------
