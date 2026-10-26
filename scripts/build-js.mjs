@@ -26,6 +26,35 @@ const fontsHash = crypto.createHash('sha256').update(fs.readFileSync(path.join(f
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(dist, { recursive: true });
 
+const hashOf = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(dist, f))).digest('hex').slice(0, 16);
+const common = {
+    bundle: true,
+    format: 'esm',
+    target: ['es2022', 'safari16'],
+    minify: true,
+    sourcemap: process.env.ENIG_TERM_SOURCEMAP === '1',
+    legalComments: 'none',
+    logLevel: 'warning',
+};
+
+// Loaded on demand, in this order of dependence: the Ogg decoders (only
+// where the browser cannot decode Ogg Vorbis/Opus itself), then the audio
+// engine (the first time a board uses audio), then the main bundle. Each is
+// asked for with ?v=<its hash>, stamped into the one that loads it.
+await build({
+    ...common,
+    entryPoints: [path.join(root, 'src', 'audio', 'ogg.ts')],
+    outfile: path.join(dist, 'enig-term-ogg.js'),
+    banner: { js: `/* enig-term ${pkg.version} Ogg decoders | includes libvorbis, libogg, libopus (BSD-3-Clause) and wasm-audio-decoders (MIT), see NOTICE */` },
+});
+await build({
+    ...common,
+    entryPoints: [path.join(root, 'src', 'audio', 'engine.ts')],
+    outfile: path.join(dist, 'enig-term-audio.js'),
+    define: { __ENIG_TERM_OGG_HASH__: JSON.stringify(hashOf('enig-term-ogg.js')) },
+    banner: { js: `/* enig-term ${pkg.version} audio engine | BSD-2-Clause */` },
+});
+
 await build({
     entryPoints: [path.join(root, 'src', 'main.ts')],
     bundle: true,
@@ -38,6 +67,7 @@ await build({
         __ENIG_TERM_VERSION__: JSON.stringify(pkg.version),
         __ENIG_TERM_WASM_HASH__: JSON.stringify(wasmHash),
         __ENIG_TERM_FONTS_HASH__: JSON.stringify(fontsHash),
+        __ENIG_TERM_AUDIO_HASH__: JSON.stringify(hashOf('enig-term-audio.js')),
     },
     legalComments: 'none',
     banner: { js: `/* enig-term ${pkg.version} | BSD-2-Clause | includes icy_tools (MIT OR Apache-2.0), see NOTICE */` },
@@ -125,6 +155,14 @@ Topaz is &copy; Amiga Inc.) and records their origin in <a href="fonts/amiga/REA
 <p>The Amiga profile's colours are the values (only) of NComm 3.0/3.09's ANSI pens and of Term 4.8's EGA-style table
 (Olaf Barthel); no code from either.</p>
 
+<h2>Audio</h2>
+<p>CTerm audio and "ANSI" music follow the <a href="https://syncterm.bbsdev.net/cterm.html">CTerm manual</a>; the
+Synth waveforms reproduce what SyncTERM's tone generator makes. Browsers that cannot decode Ogg Vorbis or Opus
+themselves load <code>enig-term-ogg.js</code>: <a href="https://github.com/eshaz/wasm-audio-decoders">wasm-audio-decoders</a>
+by Ethan Halsall (MIT), which compiles <a href="https://xiph.org/vorbis/">libvorbis</a> and libogg (Xiph.Org Foundation)
+and <a href="https://opus-codec.org/">libopus</a> (Xiph.Org, Skype, Octasic and others) to WebAssembly, all three
+BSD-3-Clause, with Mark Adler's puff (zlib licence). Full notices: <a href="NOTICE">NOTICE</a>.</p>
+
 <h2>Other</h2>
 <p>The Telnet layer is ported from the Xibalba web terminal, the author's own code, relicensed under BSD-2-Clause.</p>
 </main></body>
@@ -137,4 +175,4 @@ const size = f => {
     return `${f}: ${b.length} B (gzip ${zlib.gzipSync(b, { level: 9 }).length} B)`;
 };
 const pc437 = Object.values(fontManifest.slots[0].files).map(f => fontManifest.files[f].bytes);
-console.log([size('enig-term.js'), size('enig_term_core_bg.wasm'), size('fonts/manifest.json'), `fonts: CP437 8x16 ${fontManifest.files['pc/cp437-8x16.psf'].bytes} B (all heights ${pc437.reduce((a, b) => a + b, 0)} B)`, `version ${pkg.version}, wasm ${wasmHash}, fonts ${fontsHash}`].join('\n'));
+console.log([size('enig-term.js'), size('enig-term-audio.js'), size('enig-term-ogg.js'), size('enig_term_core_bg.wasm'), size('fonts/manifest.json'), `fonts: CP437 8x16 ${fontManifest.files['pc/cp437-8x16.psf'].bytes} B (all heights ${pc437.reduce((a, b) => a + b, 0)} B)`, `version ${pkg.version}, wasm ${wasmHash}, fonts ${fontsHash}`].join('\n'));

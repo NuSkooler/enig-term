@@ -13,6 +13,7 @@ import { createRenderer, type Renderer } from './renderer.ts';
 import { ScrollbackView } from './scrollback.ts';
 import { contains, normalize, selectionText, wordAt, type CellPos, type SelRange } from './selection.ts';
 import { TelnetClient } from './telnet.ts';
+import { boardKey, Sound, type SoundState } from './sound.ts';
 
 export type ConnState = 'idle' | 'connecting' | 'connected' | 'closed' | 'error';
 
@@ -30,6 +31,8 @@ export interface TermEvents {
     selection: { text: string | null };
     /** The look profile in effect changed (setting: the configured profile, auto/pc/amiga). */
     profile: { profile: 'pc' | 'amiga'; setting: string };
+    /** Sound: off (disabled or unsupported), idle (not used yet), locked (the board plays sound; waiting for a click), on, muted. */
+    sound: { state: SoundState };
 }
 export type TermEventName = keyof TermEvents;
 type Listener<K extends TermEventName> = (ev: TermEvents[K]) => void;
@@ -60,6 +63,10 @@ export interface TestHooks {
     debugCtermDa?: boolean;
     /** Let CSI ? 2026 h reach the engine, which panics: exercises recovery. */
     debugPanic?: boolean;
+    /** Behave as if the browser refused audio until a gesture. */
+    audioLock?: boolean;
+    /** Decode Ogg with the bundled decoders even where the browser can. */
+    audioFallback?: boolean;
 }
 
 export interface FrameStats {
@@ -84,6 +91,10 @@ const REPLY_BURST = 8;
 const PASTE_GAP_MS = 10;
 /** Longest the stream is held while a font the host selected is fetched. */
 const FONT_WAIT_MS = 5000;
+/** Longest the stream is held for audio (APC A;Wait, foreground "ANSI" music). */
+const AUDIO_WAIT_MS = 300_000;
+/** Host bytes kept while holding; past this the hold ends early. */
+const HELD_MAX = 32 << 20;
 
 /** Directory URL (with a trailing slash) relative to the bundle. */
 function dirUrl(s: string): URL | null {
@@ -130,8 +141,14 @@ export class Terminal {
     private readonly t0 = performance.now();
     private lastFont = 0;
     readonly fonts: FontStore;
-    /** Host bytes held while a selected font is fetched (null: not holding). */
+    /** Host bytes held while a selected font is fetched, or for audio (null: not holding). */
     private held: Uint8Array[] | null = null;
+    private heldBytes = 0;
+    /** Bumped by every hold, so a stale release cannot end a newer one. */
+    private holdGen = 0;
+    /** Font refusals already told to the user this session. */
+    private fontNotices = new Set<string>();
+    readonly sound: Sound;
     private fontScan = new FontSelectScan();
     /** The host's normal font (Ps1 0) is an Amiga one: the auto profile follows it. */
     private hostAmiga = false;
@@ -188,7 +205,24 @@ export class Terminal {
         });
         this.core.onTrap = info => this.onTrap(info);
         this.core.onRebuilt = () => this.onRebuilt();
-        this.core.onEvents = evs => evs.forEach(ev => this.onEvent(ev));
+        this.core.onEvents = evs => evs.forEach(ev => void this.onEvent(ev));
+        // Audio APC strings are base64 files: the core keeps one up to the
+        // file limit (as base64, with room for the command around it).
+        this.core.setApcLimit(Math.ceil((opts.audioMaxFile * 1048576 * 4) / 3) + 4096);
+        this.sound = new Sound(
+            { sound: opts.sound, mute: opts.mute, volume: opts.volume, musicTone: opts.musicTone, audioCache: opts.audioCache, audioMaxFile: opts.audioMaxFile, audioMemory: opts.audioMemory },
+            {
+                reply: s => {
+                    this.logLine(`audio -> ${JSON.stringify(s.length > 200 ? s.slice(0, 200) + '...' : s)}`);
+                    this.sendRaw(fromLatin1(s));
+                },
+                log: s => this.logLine(s),
+                board: () => boardKey(this.endpoint),
+                notice: (level, text) => this.events.emit('notice', { level, text }),
+                state: state => this.events.emit('sound', { state }),
+            },
+            { lock: hooks.audioLock, fallback: hooks.audioFallback },
+        );
 
         this.canvas = document.createElement('canvas');
         this.canvas.className = 'screen';
@@ -210,6 +244,11 @@ export class Terminal {
             this.events.emit('scroll', { offset, lines: this.core.call(c => c.scrollback_len(), 0) });
         };
         this.bindPointer();
+        // Any key or tap in the terminal lets sound start (browsers need a gesture).
+        const gesture = () => this.sound.gesture();
+        el.addEventListener('pointerdown', gesture, true);
+        el.addEventListener('keydown', gesture, true);
+        el.addEventListener('touchend', gesture, true);
 
         // Device-pixel sizing: the exact device box where the browser reports it
         // (Chromium, Firefox); contentBox x devicePixelRatio elsewhere (Safari).
@@ -279,6 +318,11 @@ export class Terminal {
                 break;
             case 'autoReconnect':
                 if (!value) this.cancelReconnect();
+                break;
+            case 'mute':
+            case 'volume':
+            case 'musicTone':
+                this.sound.set({ [key]: value });
                 break;
             default:
                 break;
@@ -504,44 +548,103 @@ export class Terminal {
     write(bytes: Uint8Array | string): void {
         const b = typeof bytes === 'string' ? fromLatin1(bytes) : bytes;
         this.stats.bytesIn += b.length;
-        if (this.held) this.held.push(b.slice());
-        else this.feedChunk(b);
+        if (this.held) {
+            this.held.push(b.slice());
+            this.heldBytes += b.length;
+            // A host that keeps sending while we wait: stop waiting rather than buffer without end.
+            if (this.heldBytes > HELD_MAX) this.release(this.holdGen);
+        } else this.feedChunk(b);
     }
 
-    /** True while host output is held for a font fetch (tests). */
+    /** True while host output is held (a font fetch, A;Wait, foreground music). */
     get holding(): boolean {
         return this.held !== null;
     }
 
     private feedChunk(b: Uint8Array): void {
+        const before = this.fontScan.clone();
         for (let i = 0; i < b.length; i++) {
             const sel = this.fontScan.step(b[i]);
             if (!sel) continue;
             const font = sel[1];
             const h = this.core.modeFontHeight;
             if (font > 255 || this.core.hasFont(font) || !this.fonts.mayHave(font, h)) continue;
-            this.feedNow(b.subarray(0, i));
-            this.held = [b.slice(i)];
-            void this.fetchThenResume(font, h);
+            const n = this.feedNow(b.subarray(0, i));
+            if (n < i) {
+                // Audio holds the stream before the font selection: rescan from there later.
+                this.rewindScan(before, b, n);
+                return;
+            }
+            this.hold([b.slice(i)]);
+            void this.fetchThenResume(font, h, this.holdGen);
             return;
         }
-        this.feedNow(b);
+        const n = this.feedNow(b);
+        if (n < b.length) this.rewindScan(before, b, n);
     }
 
-    private feedNow(b: Uint8Array): void {
-        if (!b.length) return;
-        const t = performance.now();
-        const events = this.core.feed(b);
-        this.stats.feedMs += performance.now() - t;
-        for (const ev of events) this.onEvent(ev);
+    /** The font scanner as it was after `n` bytes of `b` (the rest is held and scanned again). */
+    private rewindScan(before: FontSelectScan, b: Uint8Array, n: number): void {
+        this.fontScan = before.clone();
+        for (let i = 0; i < n; i++) this.fontScan.step(b[i]);
     }
 
-    private async fetchThenResume(font: number, height: number): Promise<void> {
+    /**
+     * Feed bytes to the core and handle what they produced. The core stops
+     * after "ANSI" music and A;Wait; if that needs the stream held, the rest
+     * is held and the number of bytes fed is returned (else b.length).
+     */
+    private feedNow(b: Uint8Array): number {
+        let off = 0;
+        while (off < b.length) {
+            const t = performance.now();
+            const events = this.core.feed(off ? b.subarray(off) : b);
+            this.stats.feedMs += performance.now() - t;
+            const fed = Math.max(1, this.core.fed);
+            const holds: Promise<void>[] = [];
+            for (const ev of events) {
+                const h = this.onEvent(ev);
+                if (h) holds.push(h);
+            }
+            off = Math.min(b.length, off + fed);
+            if (holds.length) {
+                const g = this.hold(off < b.length ? [b.slice(off)] : []);
+                const cap = new Promise<void>(r => window.setTimeout(r, AUDIO_WAIT_MS));
+                void Promise.race([Promise.all(holds), cap]).then(() => this.release(g));
+                return off;
+            }
+        }
+        return b.length;
+    }
+
+    private hold(q: Uint8Array[]): number {
+        this.held = q;
+        this.heldBytes = q.reduce((n, c) => n + c.length, 0);
+        return ++this.holdGen;
+    }
+
+    /** End hold `gen` (if it is still the current one) and feed what was held. */
+    private release(gen: number): void {
+        if (this.destroyed || !this.held || gen !== this.holdGen) return;
+        const q = this.held;
+        this.held = null;
+        this.heldBytes = 0;
+        // feedChunk may start holding again; the rest then queues.
+        for (const c of q) {
+            const again = this.held as Uint8Array[] | null;
+            if (again) {
+                again.push(c);
+                this.heldBytes += c.length;
+            } else this.feedChunk(c);
+        }
+    }
+
+    private async fetchThenResume(font: number, height: number, gen: number): Promise<void> {
         let timer = 0;
         const timeout = new Promise<null>(r => (timer = window.setTimeout(() => r(null), FONT_WAIT_MS)));
         const f = await Promise.race([this.fonts.font(font, height), timeout]);
         clearTimeout(timer);
-        if (this.destroyed || !this.held) return;
+        if (this.destroyed || !this.held || gen !== this.holdGen) return;
         if (f) {
             try {
                 this.core.loadFont(font, f.name, f.data);
@@ -550,14 +653,7 @@ export class Terminal {
                 this.logLine(`font ${font} rejected: ${(e as Error)?.message ?? e}`);
             }
         } else this.logLine(`font ${font} not available at ${height} px`);
-        const q = this.held;
-        this.held = null;
-        // feedChunk may start holding again (another font); the rest then queues.
-        for (const c of q) {
-            const again = this.held as Uint8Array[] | null;
-            if (again) again.push(c);
-            else this.feedChunk(c);
-        }
+        this.release(gen);
     }
 
     /** Load the fonts a cell height change left without one. */
@@ -574,9 +670,15 @@ export class Terminal {
         if (this.log.length > 500) this.log.splice(0, this.log.length - 500);
     }
 
-    private onEvent(ev: CoreEvent): void {
+    /** Handle a core event; returns a promise when the stream must wait for it. */
+    private onEvent(ev: CoreEvent): Promise<void> | null {
         switch (ev.t) {
             case 'req': {
+                if (ev.k === 'audio') {
+                    if (!this.replyAllowed('audio')) this.logLine(`req ${JSON.stringify(ev)} -> (suppressed: answer loop?)`);
+                    else this.sound.input({ kind: 'report', params: ev.params }, false);
+                    break;
+                }
                 if (!this.replyAllowed(ev.k)) {
                     this.logLine(`req ${JSON.stringify(ev)} -> (suppressed: answer loop?)`);
                     break;
@@ -592,6 +694,7 @@ export class Terminal {
             }
             case 'font':
                 this.logLine(`font ${ev.slot};${ev.font} ok=${ev.ok}${ev.reason ? ` (${ev.reason})` : ''}`);
+                if (!ev.ok && ev.reason === 'missing' && !this.localSelect) this.fontRefused(ev.font);
                 if (ev.ok && ev.slot === 0) {
                     // The normal font sets the charset of typed text and the auto profile.
                     this.lastFont = ev.font;
@@ -615,12 +718,49 @@ export class Terminal {
                 this.title = ev.text;
                 this.events.emit('title', { title: ev.text });
                 break;
-            case 'apc':
+            case 'apc': {
+                if ('data' in ev) {
+                    this.logLine(`apc ${JSON.stringify(ev.data.slice(0, 200))}`);
+                    break;
+                }
+                if (ev.over) return this.sound.input({ kind: 'over', bytes: ev.n }, false);
+                const body = this.core.takeApc();
+                if (!body) break;
+                // A;Wait holds the stream until the channel is idle (CTerm blocks there).
+                const wait = body.length >= 15 && latin1(body.subarray(0, 15)) === 'SyncTERM:A;Wait';
+                return this.sound.input({ kind: 'apc', body }, wait);
+            }
             case 'music':
-                break; // audio is not in this build
+                // Foreground music holds the stream until it has played, as in CTerm.
+                return this.sound.input({ kind: 'music', notes: ev.n, fg: ev.fg, audible: false }, ev.fg);
             default:
                 this.logLine(`${ev.t} ${JSON.stringify(ev)}`);
         }
+        return null;
+    }
+
+    /**
+     * The host selected a font this terminal does not have: say so once per
+     * session (per font; once for all Amiga fonts), without interrupting.
+     */
+    private fontRefused(font: number): void {
+        const amiga = AMIGA_SLOTS.has(font);
+        const key = amiga ? 'amiga' : String(font);
+        if (this.fontNotices.has(key)) return;
+        this.fontNotices.add(key);
+        const name = this.fonts.describe(font)?.name ?? `font ${font}`;
+        let text: string;
+        if (amiga && this.fonts.amigaInstalled !== true) {
+            text = `This board asked for an Amiga font (${name}), which is not installed on this site; the PC font is used instead. Site operators: see “Amiga fonts” in the enig-term README.`;
+        } else if (amiga) {
+            text = `This board asked for an Amiga font (${name}), which this site has no ${this.core.modeFontHeight}-pixel version of; the current font stays.`;
+        } else {
+            const why = this.fonts.describe(font)?.refused;
+            text = `This board asked for ${font <= 42 ? `SyncTERM font ${font} (${name})` : `font slot ${font}, which it has not loaded`}, which this terminal does not have${why ? ` (${why})` : ''}; the current font stays.`;
+        }
+        console.warn(`enig-term: ${text}`);
+        this.logLine(`notice: ${text}`);
+        this.events.emit('notice', { level: 'info', text });
     }
 
     /**
@@ -1008,10 +1148,15 @@ export class Terminal {
             this.hostAmiga = false;
             this.profileFont = false;
             this.held = null;
+            this.heldBytes = 0;
+            this.holdGen++;
             this.fontScan = new FontSelectScan();
+            this.fontNotices.clear();
             this.scroll.toLive();
             this.applyProfile(this.opts.profile === 'amiga');
         }
+        // A new session with the host: its audio state starts over (the cache stays).
+        this.sound.reset();
         const telnet = new TelnetClient({
             termType: this.opts.termType,
             getSize: () => ({ cols: this.core.cols, rows: this.core.rows }),
@@ -1051,6 +1196,7 @@ export class Terminal {
             if (ws !== this.ws) return;
             this.ws = null;
             this.telnet = null;
+            this.sound.reset();
             // A session that lasted resets the backoff; a host that accepts and
             // drops at once keeps backing off.
             if (openedAt && performance.now() - openedAt > STABLE_MS) this.reconnectDelay = RECONNECT_MIN_MS;
@@ -1132,6 +1278,7 @@ export class Terminal {
         this.disconnect();
         clearTimeout(this.pasteTimer);
         for (const r of this.ro) r.disconnect();
+        this.sound.destroy();
         this.core.destroy();
         this.el.replaceChildren();
     }

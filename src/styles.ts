@@ -19,6 +19,19 @@ button:disabled, select:disabled { opacity: .45; cursor: default; }
 button[aria-pressed="true"] { border-color: var(--et-accent); color: var(--et-accent); }
 button:focus-visible, select:focus-visible, .host:focus-visible { outline: 2px solid var(--et-accent); outline-offset: 1px; }
 .status { color: var(--et-dim); font-size: 12px; white-space: nowrap; }
+.soundctl { display: inline-flex; gap: 4px; align-items: center; }
+.soundctl[hidden], .settings .group[hidden] { display: none; }
+.soundctl .vol { width: 6rem; accent-color: var(--et-accent); }
+button[data-sound="locked"] { border-color: var(--et-warn); color: var(--et-warn); }
+button[data-sound="muted"] { color: var(--et-dim); }
+button[data-sound="idle"] { border-color: var(--et-edge); color: var(--et-ink); }
+.settings .group { display: contents; }
+.settings input[type="range"] { width: 7rem; accent-color: var(--et-accent); }
+.settings .note { color: var(--et-dim); }
+.soundprompt { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; z-index: 3;
+  background: rgba(22,22,28,.96); border: 1px solid var(--et-warn); border-radius: 4px; padding: 6px 8px; max-width: min(92%, 34rem); }
+.soundprompt[hidden] { display: none; }
+.soundprompt .primary { border-color: var(--et-warn); color: var(--et-warn); }
 .status[data-state="connected"] { color: var(--et-accent); }
 .status[data-state="error"] { color: var(--et-error); }
 .spacer { flex: 1 1 0; }
@@ -62,6 +75,7 @@ dialog .actions .primary { border-color: var(--et-accent); color: var(--et-accen
   .toolbar { padding: 6px 8px; gap: 4px; }
   .title { display: none; }
   .toolbar button { padding: 5px 8px; }
+  .soundctl .vol { display: none; }
   .stage { padding: 4px 0; }
 }
 `;

@@ -8,6 +8,7 @@
 //   auto-connect  connect on load
 //   title, cols, rows, profile (auto|pc|amiga), scrollback
 //   fonts, amiga-fonts (font directories), amiga-palette, amiga-aspect, amiga-rows
+//   sound ("off": no audio at all), mute, volume (0-100), music-tone (square|syncterm|sine)
 //   crt, aspect   booleans: present / "on" / "true" = on, "off" / "false" = off
 //   scale         fit | integer;   keybar  auto | on | off
 //   toolbar       "off" hides the toolbar;  persist  "off" stops saving user settings
@@ -15,7 +16,7 @@
 //   fill          fit the screen to the element's height too
 // Events (CustomEvent, detail = the event object): state, title, bell, link
 // (cancelable: preventDefault() skips the built-in confirmation), notice,
-// recovered, scroll, selection.
+// recovered, scroll, selection, profile, sound.
 import { mount, type EnigTermHandle, type MountOptions } from './api.ts';
 import type { TermEventName } from './terminal.ts';
 
@@ -44,9 +45,13 @@ const ATTRS: Record<string, string> = {
     'amiga-palette': 'amigaPalette',
     'amiga-aspect': 'amigaAspect',
     'amiga-rows': 'amigaRows',
+    sound: 'sound',
+    mute: 'mute',
+    volume: 'volume',
+    'music-tone': 'musicTone',
 };
-const RUNTIME = new Set(['endpoint', 'title', 'crt', 'aspect', 'scale', 'keyBar', 'toolbar', 'autoReconnect', 'backspace', 'blink', 'scrollback', 'profile', 'amigaPalette', 'amigaAspect', 'amigaRows']);
-const EVENTS: TermEventName[] = ['state', 'title', 'bell', 'link', 'notice', 'recovered', 'scroll', 'selection', 'profile'];
+const RUNTIME = new Set(['endpoint', 'title', 'crt', 'aspect', 'scale', 'keyBar', 'toolbar', 'autoReconnect', 'backspace', 'blink', 'scrollback', 'profile', 'amigaPalette', 'amigaAspect', 'amigaRows', 'mute', 'volume', 'musicTone']);
+const EVENTS: TermEventName[] = ['state', 'title', 'bell', 'link', 'notice', 'recovered', 'scroll', 'selection', 'profile', 'sound'];
 
 export class EnigTermElement extends HTMLElement {
     static observedAttributes = Object.keys(ATTRS);

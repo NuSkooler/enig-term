@@ -92,6 +92,20 @@ export interface Options {
     persist: boolean;
     /** Show the toolbar (host input, connect, settings). */
     toolbar: boolean;
+    /** Sound at all: CTerm audio (APC) and "ANSI" music. false: the terminal answers no audio queries. */
+    sound: boolean;
+    /** The user's mute. */
+    mute: boolean;
+    /** Master volume, 0-100. */
+    volume: number;
+    /** "ANSI" music voice: a PC-speaker square, SyncTERM's timbre, or a sine. */
+    musicTone: 'square' | 'syncterm' | 'sine';
+    /** Board sounds kept in this browser (IndexedDB, all boards together), MB. */
+    audioCache: number;
+    /** Largest sound file a board may store or play, MB. */
+    audioMaxFile: number;
+    /** Decoded audio held at once (slots and channels), MB. */
+    audioMemory: number;
 }
 
 export const DEFAULTS: Readonly<Options> = Object.freeze({
@@ -130,14 +144,21 @@ export const DEFAULTS: Readonly<Options> = Object.freeze({
     urlParams: false,
     persist: true,
     toolbar: true,
+    sound: true,
+    mute: false,
+    volume: 70,
+    musicTone: 'square',
+    audioCache: 64,
+    audioMaxFile: 16,
+    audioMemory: 192,
 }) as Options;
 
 /** Settings a user can change from the UI (and that are persisted). */
-export const USER_KEYS = ['aspect', 'crt', 'scale', 'keyBar', 'autoReconnect', 'backspace', 'sharp', 'profile', 'amigaPalette', 'amigaAspect'] as const;
+export const USER_KEYS = ['aspect', 'crt', 'scale', 'keyBar', 'autoReconnect', 'backspace', 'sharp', 'profile', 'amigaPalette', 'amigaAspect', 'mute', 'volume', 'musicTone'] as const;
 export type UserKey = (typeof USER_KEYS)[number];
 export type UserSettings = Partial<Pick<Options, UserKey>>;
 
-const BOOL_KEYS = ['lockEndpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'scrollbackOnClear', 'autoReconnect', 'blink', 'allowInsecure', 'urlParams', 'persist', 'toolbar', 'amigaIce', 'amigaBlink'] as const;
+const BOOL_KEYS = ['lockEndpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'scrollbackOnClear', 'autoReconnect', 'blink', 'allowInsecure', 'urlParams', 'persist', 'toolbar', 'amigaIce', 'amigaBlink', 'sound', 'mute'] as const;
 
 /** Pixel aspect (height:width) of the Amiga presets: PAL hires 640x256 and NTSC 640x200 shown at 4:3. */
 export const AMIGA_ASPECT = { pal: 1.875, ntsc: 2.4 } as const;
@@ -208,6 +229,10 @@ export function sanitize(src: Record<string, unknown> | null | undefined, warn: 
         ['cols', 20, 255],
         ['rows', 10, 255],
         ['scrollback', 0, 100000],
+        ['volume', 0, 100],
+        ['audioCache', 0, 4096],
+        ['audioMaxFile', 1, 64],
+        ['audioMemory', 16, 2048],
     ] as const) {
         if (!(k in src)) continue;
         const v = Number(src[k]);
@@ -228,6 +253,7 @@ export function sanitize(src: Record<string, unknown> | null | undefined, warn: 
     oneOf('scale', ['fit', 'integer']);
     oneOf('backspace', ['bs', 'del']);
     oneOf('renderer', ['webgl2', '2d']);
+    oneOf('musicTone', ['square', 'syncterm', 'sine']);
     for (const k of ['linkSchemes', 'lock'] as const) {
         if (!(k in src)) continue;
         const v = src[k];
@@ -244,10 +270,10 @@ export function fromUrlParams(q: URLSearchParams): { opts: Record<string, unknow
     const map: Record<string, string> = { connect: 'autoConnect', keys: 'keyBar' };
     for (const [k, v] of q) {
         const key = map[k] ?? k;
-        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect', 'amigaPalette', 'amigaAspect', 'amigaRows'].includes(key)) opts[key] = v;
+        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect', 'amigaPalette', 'amigaAspect', 'amigaRows', 'mute', 'volume', 'musicTone'].includes(key)) opts[key] = v;
     }
     const hooks: Record<string, string> = {};
-    for (const k of ['naws', 'debugDa', 'debugPanic']) {
+    for (const k of ['naws', 'debugDa', 'debugPanic', 'audioLock', 'audioFallback']) {
         const v = q.get(k);
         if (v !== null) hooks[k] = v;
     }

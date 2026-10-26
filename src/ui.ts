@@ -17,6 +17,10 @@ const TEMPLATE = html`
     <span class="spacer"></span>
     <button type="button" data-act="copy" title="Copy the selection (Ctrl+Shift+C)" disabled>Copy</button>
     <button type="button" data-act="paste" title="Paste (Ctrl+V)">Paste</button>
+    <span class="soundctl" data-soundctl>
+      <button type="button" data-act="sound" data-sound="idle" aria-pressed="true" title="Sound on or off">Sound</button>
+      <input type="range" class="vol" data-set="volume" min="0" max="100" step="1" aria-label="Volume" title="Volume">
+    </span>
     <button type="button" data-act="settings" aria-expanded="false" aria-controls="et-settings">Settings</button>
     <button type="button" data-act="fullscreen" aria-pressed="false" title="Full screen">Full screen</button>
   </div>
@@ -30,12 +34,20 @@ const TEMPLATE = html`
     <label>Look <select data-set="profile" title="Auto: PC, Amiga while the board uses an Amiga font"><option value="auto">Auto</option><option value="pc">PC</option><option value="amiga">Amiga</option></select></label>
     <label>Amiga colours <select data-set="amigaPalette"><option value="ncomm">NComm</option><option value="term-ega">Term</option></select></label>
     <label>Amiga aspect <select data-set="amigaAspect"><option value="pal">PAL</option><option value="ntsc">NTSC</option></select></label>
+    <span class="group" data-soundset>
+      <label><input type="checkbox" data-set="mute"> Mute sound</label>
+      <label>Volume <input type="range" data-set="volume" min="0" max="100" step="1"></label>
+      <label>Music <select data-set="musicTone" title="The voice of ANSI music"><option value="square">PC speaker</option><option value="syncterm">SyncTERM</option><option value="sine">Sine</option></select></label>
+      <button type="button" data-act="clear-sound" title="Forget the sounds boards stored in this browser">Clear sound cache</button>
+      <span class="note" data-soundcache role="status" aria-live="polite"></span>
+    </span>
     <a class="credits" data-credits target="_blank" rel="noopener">Credits and licences</a>
   </div>
   <div class="stage" data-stage>
     <div class="term" data-term></div>
     <div class="scrollmark" data-scrollmark hidden><span data-scrolltext></span><button type="button" data-act="live">Live</button></div>
     <div class="toast" data-toast hidden role="status" aria-live="polite"><span data-toasttext></span><button type="button" data-act="toast-close" aria-label="Dismiss">&times;</button></div>
+    <div class="soundprompt" data-soundprompt hidden role="status"><button type="button" class="primary" data-act="sound-enable">This board plays sound: click to enable it</button><button type="button" data-act="sound-dismiss" aria-label="Dismiss">&times;</button></div>
   </div>
   <div class="keybar" data-keybar hidden part="keybar">
     <div class="row">
@@ -86,6 +98,7 @@ export class Chrome {
     private keyBarShown = false;
     private toastTimer = 0;
     private pendingLink = '';
+    private promptDismissed = false;
     private coarse = window.matchMedia?.('(pointer: coarse)');
     private disposers: (() => void)[] = [];
     terminal: Terminal | null = null;
@@ -131,8 +144,41 @@ export class Chrome {
 
         this.on('[data-act="connect"]', 'click', () => {
             if (t.state === 'connected' || t.state === 'connecting') t.disconnect();
-            else this.connectFromInput();
+            else {
+                // The click is a user gesture: let sound start now, before the board needs it.
+                t.sound.prime();
+                this.connectFromInput();
+            }
         });
+        this.on('[data-act="sound"]', 'click', () => {
+            if (t.sound.state === 'locked') t.sound.gesture(true);
+            else this.setOption('mute', !this.opts.mute, true);
+            t.input.focus();
+        });
+        this.on('[data-act="sound-enable"]', 'click', () => {
+            t.sound.gesture(true);
+            this.q('[data-soundprompt]').hidden = true;
+            t.input.focus();
+        });
+        this.on('[data-act="sound-dismiss"]', 'click', () => {
+            this.promptDismissed = true;
+            this.q('[data-soundprompt]').hidden = true;
+            t.input.focus();
+        });
+        this.on('[data-act="clear-sound"]', 'click', () => {
+            const out = this.q('[data-soundcache]');
+            out.textContent = 'Clearing…';
+            void t.sound.clearCache().then(
+                u => (out.textContent = u.files ? `Cleared ${u.files} file${u.files === 1 ? '' : 's'} (${Math.max(1, Math.round(u.bytes / 1024))} KB)` : 'Nothing stored'),
+                () => (out.textContent = 'Could not clear'),
+            );
+        });
+        if (!o.sound) {
+            this.q('[data-soundctl]').hidden = true;
+            this.q('[data-soundset]').hidden = true;
+        }
+        t.events.on('sound', ev => this.showSound(ev.state));
+        this.showSound(t.sound.state);
         this.on('[data-act="copy"]', 'click', () => void t.copySelection());
         this.on('[data-act="paste"]', 'click', () => void t.pasteFromClipboard());
         this.on('[data-act="live"]', 'click', () => {
@@ -218,6 +264,17 @@ export class Chrome {
         if (ep && !this.opts.lockEndpoint && state === 'connecting') this.q<HTMLInputElement>('[data-host]').value = ep;
     }
 
+    /** Reflect the sound state: the toolbar button and the "enable sound" prompt. */
+    showSound(state: string): void {
+        const b = this.q('[data-act="sound"]');
+        b.dataset.sound = state;
+        b.textContent = state === 'locked' ? 'Enable sound' : state === 'muted' ? 'Muted' : 'Sound';
+        b.setAttribute('aria-pressed', String(state !== 'muted'));
+        b.title = state === 'locked' ? 'This board plays sound: click to enable it' : state === 'muted' ? 'Sound is muted: click to unmute' : 'Click to mute';
+        const p = this.q('[data-soundprompt]');
+        p.hidden = state !== 'locked' || this.promptDismissed;
+    }
+
     toast(text: string, level: 'info' | 'warn' | 'error' = 'info'): void {
         const el = this.q('[data-toast]');
         el.dataset.level = level;
@@ -270,10 +327,11 @@ export class Chrome {
             el.disabled = !may;
             if (!may) el.title = 'Set by the board';
             const val = this.opts[key];
-            if (el instanceof HTMLInputElement) el.checked = !!val;
+            const range = el instanceof HTMLInputElement && el.type === 'range';
+            if (el instanceof HTMLInputElement && !range) el.checked = !!val;
             else el.value = String(val);
-            el.addEventListener('change', () => {
-                const v = el instanceof HTMLInputElement ? el.checked : el.value;
+            el.addEventListener(range ? 'input' : 'change', () => {
+                const v = range ? Number(el.value) : el instanceof HTMLInputElement ? el.checked : el.value;
                 this.setOption(key, v as never, true);
             });
         }
@@ -282,10 +340,10 @@ export class Chrome {
 
     /** Reflect an option in the settings panel without applying it. */
     syncSetting(key: string, value: unknown): void {
-        const el = this.shadow.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-set="${key}"]`);
-        if (!el) return;
-        if (el instanceof HTMLInputElement) el.checked = !!value;
-        else el.value = String(value);
+        for (const el of this.shadow.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`[data-set="${key}"]`)) {
+            if (el instanceof HTMLInputElement && el.type !== 'range') el.checked = !!value;
+            else el.value = String(value);
+        }
     }
 
     /** Apply a setting (from the UI or the API); `fromUser` also persists it. */
@@ -299,11 +357,7 @@ export class Chrome {
         else if (key === 'endpoint') {
             if (!this.opts.lockEndpoint || !fromUser) this.q<HTMLInputElement>('[data-host]').value = String(value ?? '');
         } else t.set(key, value);
-        const el = this.shadow.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-set="${key}"]`);
-        if (el) {
-            if (el instanceof HTMLInputElement) el.checked = !!value;
-            else el.value = String(value);
-        }
+        this.syncSetting(key, value);
         if (fromUser && this.opts.persist && (USER_KEYS as readonly string[]).includes(key)) {
             (this.user as Record<string, unknown>)[key] = value;
             if (!saveUserSettings(this.user)) this.toast('Settings could not be saved in this browser.', 'info');

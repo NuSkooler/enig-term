@@ -113,6 +113,12 @@ export class FontStore {
         return !!this.pc?.slots[slot]?.files?.[height];
     }
 
+    /** Whether the operator installed Amiga fonts: unknown until their manifest has been asked for. */
+    get amigaInstalled(): boolean | undefined {
+        if (!this.amigaUrl) return false;
+        return this.amiga === undefined ? undefined : !!this.amiga;
+    }
+
     /** Slot description from the manifests (refusal reasons included). */
     describe(slot: number): SlotEntry | null {
         if (AMIGA_SLOTS.has(slot)) return this.amiga?.slots[slot] ?? { name: AMIGA_SLOT_NAMES[slot], refused: 'Amiga fonts are not installed' };
@@ -146,6 +152,15 @@ export class FontSelectScan {
     private params: number[] = [];
     private cur = 0;
     private digits = false;
+
+    clone(): FontSelectScan {
+        const c = new FontSelectScan();
+        c.state = this.state;
+        c.params = [...this.params];
+        c.cur = this.cur;
+        c.digits = this.digits;
+        return c;
+    }
 
     /** Returns [Ps1, Ps2] when a font selection ends at this byte. */
     step(b: number): [number, number] | null {

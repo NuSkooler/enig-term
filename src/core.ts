@@ -129,11 +129,14 @@ export class EngineCore {
     private failed = false;
     private queue: Uint8Array[] = [];
     private queued = 0;
+    /** Bytes the last feed() processed (the core stops early after music and A;Wait). */
+    fed = 0;
     private lastMessage = '';
     /** Fonts, palette and iCE gating given to the core, re-applied to a rebuilt one. */
     private fonts = new Map<string, { slot: number; name: string; data: Uint8Array }>();
     private palette: Uint8Array | null = null;
     private iceAllowed = true;
+    private apcLimit = 24 << 20;
     onTrap: ((info: TrapInfo) => void) | null = null;
     onRebuilt: (() => void) | null = null;
     /** Events produced while replaying queued bytes after a rebuild. */
@@ -155,6 +158,7 @@ export class EngineCore {
     private create(): void {
         const s = this.settings;
         this.core = new Core(s.cols, s.rows, 'ansi');
+        this.core.set_apc_limit(this.apcLimit);
         this.core.set_scrollback_lines(s.scrollback);
         this.core.set_capture_on_clear(s.scrollbackOnClear);
         if (s.debugPanic) this.core.debug_passthrough_sync(true);
@@ -189,6 +193,17 @@ export class EngineCore {
     setPalette(rgb: Uint8Array | null): void {
         this.palette = rgb;
         this.call(c => (rgb ? c.set_palette(rgb) : c.clear_palette()), undefined);
+    }
+
+    /** Longest audio APC string the core keeps (bytes). */
+    setApcLimit(bytes: number): void {
+        this.apcLimit = bytes;
+        this.call(c => c.set_apc_limit(bytes), undefined);
+    }
+
+    /** The oldest audio APC string not yet taken (one per `{ t: 'apc', n }` event). */
+    takeApc(): Uint8Array | undefined {
+        return this.call(c => c.take_apc(), undefined);
     }
 
     setIceAllowed(on: boolean): void {
@@ -237,9 +252,14 @@ export class EngineCore {
         const q = this.queue;
         this.queue = [];
         this.queued = 0;
-        for (const b of q) {
-            const ev = this.feed(b);
-            if (ev.length) this.onEvents?.(ev);
+        for (let b of q) {
+            // Replay everything: no holds here (the stream was interrupted anyway).
+            for (;;) {
+                const ev = this.feed(b);
+                if (ev.length) this.onEvents?.(ev);
+                if (this.dead || this.fed >= b.length) break;
+                b = b.subarray(this.fed);
+            }
         }
     }
 
@@ -248,8 +268,13 @@ export class EngineCore {
         this.lastMessage = reason;
     }
 
-    /** Feed host bytes; returns the events they produced (usually none). */
+    /**
+     * Feed host bytes; returns the events they produced (usually none).
+     * `fed` says how many bytes were processed: the core stops right after
+     * "ANSI" music and `APC SyncTERM:A;Wait`, and the rest is fed again.
+     */
     feed(bytes: Uint8Array): CoreEvent[] {
+        this.fed = bytes.length;
         if (this.dead) {
             if (!this.failed && this.queued + bytes.length <= MAX_QUEUED) {
                 this.queue.push(bytes.slice());
@@ -259,6 +284,7 @@ export class EngineCore {
         }
         return this.call(c => {
             const n = c.feed(bytes);
+            this.fed = c.fed();
             return n ? (JSON.parse(c.take_events()) as CoreEvent[]) : [];
         }, []);
     }

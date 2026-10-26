@@ -31,7 +31,7 @@ export interface EnigTermHandle {
     /** Change an option at run time (crt, aspect, scale, keyBar, autoReconnect, backspace, scrollback, endpoint, title, ...). */
     setOption<K extends keyof Options>(key: K, value: Options[K]): void;
     getOption<K extends keyof Options>(key: K): Options[K];
-    /** Subscribe to an event: state, title, bell, link, notice, recovered, scroll, selection. Returns an unsubscribe function. */
+    /** Subscribe to an event: state, title, bell, link, notice, recovered, scroll, selection, profile, sound. Returns an unsubscribe function. */
     on<K extends TermEventName>(event: K, fn: (ev: TermEvents[K]) => void): () => void;
     /** Send text to the host as if typed. */
     send(text: string): void;
@@ -42,6 +42,12 @@ export interface EnigTermHandle {
     focus(): void;
     resize(cols: number, rows: number): void;
     toggleFullscreen(): Promise<void>;
+    /** Sound: off, idle (not used yet), locked (waiting for a click), on or muted. */
+    readonly soundState: string;
+    /** Let sound start (call from a user gesture, e.g. your own "enable sound" button). */
+    enableSound(): void;
+    /** Forget the sounds boards stored in this browser (all boards). */
+    clearSoundCache(): Promise<{ files: number; bytes: number }>;
     readonly state: string;
     /** The terminal object itself (advanced use and tests; not a stable API). */
     readonly terminal: Terminal;
@@ -82,6 +88,8 @@ export async function mount(el: HTMLElement, options: MountOptions = {}): Promis
             naws: q.hooks.naws === undefined ? undefined : q.hooks.naws !== '0',
             debugCtermDa: q.hooks.debugDa === 'cterm',
             debugPanic: q.hooks.debugPanic === '1',
+            audioLock: q.hooks.audioLock === '1',
+            audioFallback: q.hooks.audioFallback === '1',
         };
     }
     const persist = page.persist ?? config.persist ?? true;
@@ -116,6 +124,11 @@ export async function mount(el: HTMLElement, options: MountOptions = {}): Promis
         focus: () => term.input.focus(),
         resize: (cols, rows) => term.resize(cols, rows),
         toggleFullscreen: () => chrome.toggleFullscreen(),
+        get soundState() {
+            return term.sound.state;
+        },
+        enableSound: () => term.sound.gesture(true),
+        clearSoundCache: () => term.sound.clearCache(),
         get state() {
             return term.state;
         },

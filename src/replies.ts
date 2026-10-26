@@ -55,6 +55,10 @@ export type CoreEvent =
     | { t: 'req'; k: 'fontmode'; modes: number[] }
     | { t: 'req'; k: 'fontdim'; h: number; w: number }
     | { t: 'req'; k: 'ctsmrr'; n: number }
+    /** CSI = 7 [; Pn ...] n: the CTerm audio state report (answered by the audio engine). */
+    | { t: 'req'; k: 'audio'; params: number[] }
+    /** APC SyncTERM:Q;JXL. */
+    | { t: 'req'; k: 'jxl' }
     | { t: 'req'; k: 'other'; dbg: string }
     /** CSI Ps1 ; Ps2 SP D: slot = Ps1 (0-3), font = Ps2; reason when refused: slot | font | missing. */
     | { t: 'font'; slot: number; font: number; ok: boolean; height: number; reason?: 'slot' | 'font' | 'missing' }
@@ -64,8 +68,12 @@ export type CoreEvent =
     | { t: 'bell' }
     | { t: 'link'; uri: string }
     | { t: 'title'; text: string }
+    /** An APC string that is not audio (shown in the log only). */
     | { t: 'apc'; data: string }
-    | { t: 'music'; actions: number };
+    /** An audio APC string of `n` bytes: take it with takeApc() (over: longer than the limit, dropped). */
+    | { t: 'apc'; n: number; over?: boolean }
+    /** CTerm "ANSI" music: [note, on ms, off ms, ...]; fg: CTerm holds the stream until it has played. */
+    | { t: 'music'; fg: boolean; n: number[] };
 
 /**
  * TEST HOOK ONLY: a CTerm-shaped DA ("CTerm" + a version) for ENiGMA builds
@@ -107,6 +115,9 @@ export function replyFor(ev: CoreEvent, st: ReplyState = {}): string | null {
             return ev.modes.length ? `${CSI}=2;${ev.modes.join(';')}n` : `${CSI}=2;n`;
         case 'fontdim':
             return `${CSI}=3;${ev.h};${ev.w}n`;
+        case 'jxl':
+            // CTerm APC state report: JPEG XL is not available (inline images are off).
+            return `${CSI}=1;0-n`;
         case 'ctsmrr':
             switch (ev.n) {
                 case 4: // LCF enabled
@@ -116,7 +127,7 @@ export function replyFor(ev: CoreEvent, st: ReplyState = {}): string | null {
                 case 6: // OSC 8 hyperlinks
                     return `${CSI}=6;${st.links ? 1 : 0}n`;
                 default:
-                    // 7 is CTerm audio (not in this build); others are unknown.
+                    // 7 (audio) is answered by the audio engine; others are unknown.
                     // A terminal that lacks a report sends nothing.
                     return null;
             }
