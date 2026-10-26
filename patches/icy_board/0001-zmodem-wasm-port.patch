@@ -1,0 +1,155 @@
+diff --git a/crates/icy_net/src/connection/mod.rs b/crates/icy_net/src/connection/mod.rs
+index 2152326..69444ef 100644
+--- a/crates/icy_net/src/connection/mod.rs
++++ b/crates/icy_net/src/connection/mod.rs
+@@ -1,13 +1,5 @@
++// Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): the transport modules (tokio, mio, russh, tungstenite) are not built for wasm32.
+ use crate::NetError;
+-pub mod channel;
+-pub mod modem;
+-pub mod proxy;
+-pub mod raw;
+-pub mod rlogin;
+-pub mod serial;
+-pub mod ssh;
+-pub mod telnet;
+-pub mod websocket;
+ use async_trait::async_trait;
+ use serde::{Deserialize, Serialize};
+ 
+diff --git a/crates/icy_net/src/protocol/mod.rs b/crates/icy_net/src/protocol/mod.rs
+index 4a38eb5..42a8664 100644
+--- a/crates/icy_net/src/protocol/mod.rs
++++ b/crates/icy_net/src/protocol/mod.rs
+@@ -1,12 +1,8 @@
++// Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): X/YModem and Kermit are not built (enig-term has its own X/YModem).
+ #![allow(dead_code)]
+ use std::{fmt::Display, path::PathBuf, str::FromStr};
+ 
+-pub mod xymodem;
+ use serde::Deserialize;
+-pub use xymodem::*;
+-
+-pub mod kermit;
+-pub use kermit::Kermit;
+ 
+ pub mod zmodem;
+ pub use zmodem::*;
+@@ -77,13 +73,13 @@ impl TransferProtocolType {
+         match self {
+             TransferProtocolType::None => Box::new(Empty::default()),
+             TransferProtocolType::ASCII => Box::new(Empty::default()),
+-            TransferProtocolType::XModem => Box::new(XYmodem::new(XYModemVariant::XModem)),
+-            TransferProtocolType::XModemCRC => Box::new(XYmodem::new(XYModemVariant::XModemCRC)),
+-            TransferProtocolType::XModem1k => Box::new(XYmodem::new(XYModemVariant::XModem1k)),
+-            TransferProtocolType::XModem1kG => Box::new(XYmodem::new(XYModemVariant::XModem1kG)),
+-            TransferProtocolType::YModem => Box::new(XYmodem::new(XYModemVariant::YModem)),
+-            TransferProtocolType::YModemG => Box::new(XYmodem::new(XYModemVariant::YModemG)),
+-            TransferProtocolType::Kermit => Box::new(Kermit::new()),
++            TransferProtocolType::XModem
++            | TransferProtocolType::XModemCRC
++            | TransferProtocolType::XModem1k
++            | TransferProtocolType::XModem1kG
++            | TransferProtocolType::YModem
++            | TransferProtocolType::YModemG
++            | TransferProtocolType::Kermit => Box::new(Empty::default()),
+             TransferProtocolType::ZModem => Box::new(Zmodem::new(1024)),
+             TransferProtocolType::ZModem8k => Box::new(Zmodem::new(8 * 1024)),
+             TransferProtocolType::External(_) => Box::new(Empty::default()),
+diff --git a/crates/icy_net/src/protocol/transfer_state.rs b/crates/icy_net/src/protocol/transfer_state.rs
+index a81869a..2de1d61 100644
+--- a/crates/icy_net/src/protocol/transfer_state.rs
++++ b/crates/icy_net/src/protocol/transfer_state.rs
+@@ -1,4 +1,6 @@
+-use std::{mem, path::PathBuf, time::Instant};
++// Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): Instant comes from the injected clock (crate::rt).
++use crate::rt::Instant;
++use std::{mem, path::PathBuf};
+ 
+ #[derive(Debug, Clone)]
+ pub enum OutputLogMessage {
+diff --git a/crates/icy_net/src/protocol/zmodem/rz.rs b/crates/icy_net/src/protocol/zmodem/rz.rs
+index 1727516..e379d2b 100644
+--- a/crates/icy_net/src/protocol/zmodem/rz.rs
++++ b/crates/icy_net/src/protocol/zmodem/rz.rs
+@@ -1,10 +1,11 @@
++// Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): the clock, the timeout and the output file come from crate::rt (no std::time, tokio or tempfile on wasm32).
+ #![allow(clippy::unused_self, clippy::wildcard_imports)]
+ use std::{
+     cmp::Ordering,
+     io::Write,
+-    time::{Duration, Instant},
++    time::Duration,
+ };
+-use tempfile::NamedTempFile;
++use crate::rt::{Instant, NamedTempFile};
+ 
+ use crate::{
+     Connection,
+@@ -472,7 +473,7 @@ impl Rz {
+                             .log_info(format!("Starting file transfer: '{}' ({} bytes)", file_name, file_size));
+ 
+                         transfer_state.recieve_state.file_name = file_name;
+-                        self.cur_out_file = Some(NamedTempFile::new()?);
++                        self.cur_out_file = Some(NamedTempFile::create(&transfer_state.recieve_state.file_name, file_size)?);
+                         transfer_state.recieve_state.file_size = file_size;
+                         transfer_state.recieve_state.reset_cur_transfer();
+ 
+@@ -610,7 +611,7 @@ impl Rz {
+                 // Section 8.3: briefly await the sender's "OO" before handing
+                 // the connection back to the board. Consume no bytes beyond it.
+                 // A missing/partial trailer or disconnect must not hang cleanup.
+-                let _ = tokio::time::timeout(Duration::from_secs(1), async {
++                let _ = crate::rt::timeout(Duration::from_secs(1), async {
+                     if com.read_u8().await? == b'O' {
+                         com.read_u8().await?;
+                     }
+diff --git a/crates/icy_net/src/protocol/zmodem/sz.rs b/crates/icy_net/src/protocol/zmodem/sz.rs
+index ef5dec0..4e2592a 100644
+--- a/crates/icy_net/src/protocol/zmodem/sz.rs
++++ b/crates/icy_net/src/protocol/zmodem/sz.rs
+@@ -1,14 +1,14 @@
++// Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): the clock, sleep and the file reader come from crate::rt (no std::fs or tokio on wasm32).
+ #![allow(clippy::unused_self)]
+ 
+ use std::{
+     collections::VecDeque,
+-    fs::File,
+-    io::{BufReader, Read, Seek},
++    io::{Read, Seek},
+     path::PathBuf,
+     time::Duration,
+ };
+ 
+-use tokio::time::sleep;
++use crate::rt::{SourceReader, sleep};
+ 
+ use crate::{
+     Connection,
+@@ -31,7 +31,7 @@ pub enum SendState {
+ pub struct Sz {
+     state: SendState,
+     pub file_queue: VecDeque<PathBuf>,
+-    cur_buf: Option<BufReader<File>>,
++    cur_buf: Option<SourceReader>,
+     cur_file: PathBuf,
+ 
+     pub errors: usize,
+@@ -100,7 +100,7 @@ impl Sz {
+     fn next_file(&mut self, transfer_state: &mut TransferState) -> crate::Result<bool> {
+         if let Some(next_file) = self.file_queue.pop_front() {
+             transfer_state.send_state.file_name = next_file.file_name().unwrap().to_string_lossy().to_string();
+-            transfer_state.send_state.file_size = next_file.metadata()?.len();
++            transfer_state.send_state.file_size = SourceReader::len(&next_file)?;
+ 
+             transfer_state.send_state.log_info(format!(
+                 "Starting file: {} ({} bytes, {} files remaining)",
+@@ -110,7 +110,7 @@ impl Sz {
+             ));
+ 
+             self.cur_file = next_file.clone();
+-            let reader = BufReader::new(File::open(next_file)?);
++            let reader = SourceReader::open(&next_file)?;
+             self.cur_buf = Some(reader);
+             Ok(true)
+         } else {

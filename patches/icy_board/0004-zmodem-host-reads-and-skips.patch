@@ -1,0 +1,49 @@
+diff --git a/crates/icy_net/src/protocol/zmodem/rz.rs b/crates/icy_net/src/protocol/zmodem/rz.rs
+index 61a540a..84eb975 100644
+--- a/crates/icy_net/src/protocol/zmodem/rz.rs
++++ b/crates/icy_net/src/protocol/zmodem/rz.rs
+@@ -1,5 +1,6 @@
+ // Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): the clock, the timeout and the output file come from crate::rt (no std::time, tokio or tempfile on wasm32).
+ // Changed for enig-term (patches/icy_board/0002-zmodem-rz-detect-can-abort-in-subpacket.patch): a CAN abort inside file data ends the transfer.
++// Changed for enig-term (patches/icy_board/0004-zmodem-host-reads-and-skips.patch): the host may refuse (skip) an offered file.
+ #![allow(clippy::unused_self, clippy::wildcard_imports)]
+ use std::{
+     cmp::Ordering,
+@@ -474,6 +475,15 @@ impl Rz {
+                             .log_info(format!("Starting file transfer: '{}' ({} bytes)", file_name, file_size));
+ 
+                         transfer_state.recieve_state.file_name = file_name;
++                        // enig-term: the host may refuse a file (too large to keep): skip it.
++                        if !crate::rt::accept_file(&transfer_state.recieve_state.file_name, file_size) {
++                            transfer_state
++                                .recieve_state
++                                .log_info(format!("Skipping '{}' ({} bytes): refused by the host", transfer_state.recieve_state.file_name, file_size));
++                            Header::empty(ZFrameType::Skip).write(com, HeaderType::Hex, self.can_esc_control).await?;
++                            self.state = RecvState::SendZRINIT;
++                            return Ok(true);
++                        }
+                         self.cur_out_file = Some(NamedTempFile::create(&transfer_state.recieve_state.file_name, file_size)?);
+                         transfer_state.recieve_state.file_size = file_size;
+                         transfer_state.recieve_state.reset_cur_transfer();
+diff --git a/crates/icy_net/src/protocol/zmodem/sz.rs b/crates/icy_net/src/protocol/zmodem/sz.rs
+index f63a9bb..27a96b8 100644
+--- a/crates/icy_net/src/protocol/zmodem/sz.rs
++++ b/crates/icy_net/src/protocol/zmodem/sz.rs
+@@ -1,5 +1,6 @@
+ // Changed for enig-term (patches/icy_board/0001-zmodem-wasm-port.patch): the clock, sleep and the file reader come from crate::rt (no std::fs or tokio on wasm32).
+ // Changed for enig-term (patches/icy_board/0003-zmodem-sz-ignore-repeated-zrpos.patch): a repeated ZRPOS for the same offset within a second is ignored.
++// Changed for enig-term (patches/icy_board/0004-zmodem-host-reads-and-skips.patch): file data is awaited from the host.
+ #![allow(clippy::unused_self)]
+ 
+ use std::{
+@@ -193,6 +194,10 @@ impl Sz {
+                     return Ok(());
+                 }
+ 
++                // enig-term: the data comes from the host as it is read (a Blob in a browser).
++                if let Some(cur) = &mut self.cur_buf {
++                    cur.ready(self.package_len).await?;
++                }
+                 let mut block = vec![0; self.package_len];
+                 let bytes_read = if let Some(cur) = &mut self.cur_buf { cur.read(&mut block)? } else { 0 };
+ 

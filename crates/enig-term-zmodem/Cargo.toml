@@ -1,0 +1,34 @@
+[package]
+name = "enig-term-zmodem"
+version = "0.1.0"
+edition = "2024"
+license = "BSD-2-Clause AND Apache-2.0"
+description = "ZModem for enig-term: icy_net's ZModem (icy_board, Apache-2.0) in WASM behind a push-model wrapper"
+publish = false
+
+# The ZModem code is icy_board's crates/icy_net, compiled straight from the
+# checkout scripts/prepare-icy.sh makes in build/icy_board/ (with
+# patches/icy_board/*.patch applied); see src/lib.rs. This is the revision
+# icy_tools 1456074e pins for icy_net.
+[package.metadata.enig-term]
+icy-board-rev = "46461702f01ea8b7a7aef55506338db776064a14"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "=0.2.129"
+# What icy_net's protocol code uses.
+async-trait = "0.1"
+thiserror = "2"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]
