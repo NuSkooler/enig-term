@@ -22,7 +22,7 @@
 // transfer fails, and the next one instantiates the module again.
 import init, { ZSession, last_panic, __enigModule, __enigReset } from '../../build/wasm-zmodem/enig_term_zmodem.js';
 import { BOARD_LEFT, type SourceFile, type TransferEnd, type TransferEngine, type TransferEvents } from './types.ts';
-import { CANCEL_SEQ, concat, safeName } from './xymodem.ts';
+import { boardLeftAbort, CANCEL_SEQ, concat, safeName } from './xymodem.ts';
 
 let loading: Promise<void> | null = null;
 
@@ -82,6 +82,8 @@ export class ZmodemEngine implements TransferEngine {
     private win: number[] = [];
     private csi = 0;
     private esc = false;
+    /** Bytes sent since the board's program was last heard (a received file event, or a file starting to go). */
+    private sent = 0;
     private readonly sendFiles: SourceFile[];
     private readonly mode: 'send' | 'receive';
     private readonly out: (b: Uint8Array) => void;
@@ -164,6 +166,7 @@ export class ZmodemEngine implements TransferEngine {
         this.log('the board is showing a screen again: transfer over');
         const screen = Uint8Array.from(this.win);
         this.alive();
+        this.out(boardLeftAbort(this.sent));
         this.guard(s => s.take_input()); // part of the screen, kept above
         this.trailing = [screen, ...this.queued.splice(0), ...this.trailing];
         this.end({ ok: false, files: this.doneFiles, error: BOARD_LEFT, cancelled: 'remote' });
@@ -190,6 +193,7 @@ export class ZmodemEngine implements TransferEngine {
             if (!this.blocked && !paced) this.guard(s => s.poll());
             const out = this.guard(s => s.take_output());
             if (out?.length) {
+                this.sent += out.length;
                 this.lastActivity = this.opts.now();
                 if (this.mode === 'receive') this.alive();
                 this.out(out);
@@ -220,7 +224,10 @@ export class ZmodemEngine implements TransferEngine {
             const e = this.guard(s => s.next_event());
             if (!e) return !!this.s;
             const kind = e.kind;
-            if (kind !== 'data' || this.mode === 'receive') this.alive();
+            if (kind !== 'data' || this.mode === 'receive') {
+                this.alive();
+                this.sent = 0;
+            }
             try {
                 switch (kind) {
                     case 'start':

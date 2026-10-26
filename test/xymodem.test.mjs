@@ -8,10 +8,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-    ACK, CAN, CANCEL_SEQ, CRC_REQ, EOT, NAK, SOH, STX, SUB, QUIET_MS, REQUEST_MS,
-    XyReceiver, XySender, checksum, crc16, encodeBlock, parseYmodemHeader, safeName, wireName, ymodemHeader,
+    ACK, BS, CAN, CANCEL_SEQ, CRC_REQ, EOT, NAK, SOH, STX, SUB, QUIET_MS, REQUEST_MS,
+    XyReceiver, XySender, boardLeftAbort, checksum, crc16, encodeBlock, parseYmodemHeader, safeName, wireName, ymodemHeader,
 } from '../src/transfer/xymodem.ts';
 import { LRZSZ, SEXYZ, allBytes, peerCommand, random, runPeer, sha, tmpdir } from './xfer-peers.mjs';
+import { BOARD_LEFT } from '../src/transfer/types.ts';
 
 const enc = s => new TextEncoder().encode(s);
 const src = (name, data, mtime = 0) => ({ name, size: data.length, mtime, read: (o, n) => data.subarray(o, o + n) });
@@ -263,6 +264,23 @@ test('sender: the board drawing its screen after the end-of-batch block is a suc
     m2.wait(200);
     m2.feed(screen);
     assert.deepEqual([ev2.result?.ok, ev2.result?.cancelled], [false, 'remote']);
+    // Block 0 went to a prompt as typing: the abort rubs it out (a prompt
+    // holds little, so 256 backspaces at most).
+    assert.deepEqual(m2.take().slice(133), Array.from(boardLeftAbort(133)));
+    assert.deepEqual(Array.from(boardLeftAbort(133)), [...Array(8).fill(CAN), ...Array(133).fill(BS)]);
+    assert.equal(boardLeftAbort(0).length, 8 + 10);
+    assert.equal(boardLeftAbort(1 << 20).length, 8 + 256);
+});
+
+test('receiver: the board drawing its screen ends the transfer; the requests it got as typing are rubbed out', () => {
+    const screen = '\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: ';
+    const ev = sink().ev;
+    const m = manual((send, now) => new XyReceiver('ymodem', send, ev, { now }));
+    m.wait(6100); // 'C' now, then every 3 s
+    assert.deepEqual(m.take(), [CRC_REQ, CRC_REQ, CRC_REQ]);
+    m.feed(screen);
+    assert.deepEqual([ev.result?.ok, ev.result?.cancelled, ev.result?.error], [false, 'remote', BOARD_LEFT]);
+    assert.deepEqual(m.take(), Array.from(boardLeftAbort(3)));
 });
 
 test('sender: resends on NAK and on silence, gives up after too many errors with CAN', () => {

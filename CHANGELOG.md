@@ -16,7 +16,9 @@
   paste are not sent, NAWS and audio replies wait, Telnet stays underneath
   (IAC escaped out, decoded in). Afterwards the board's text is shown; after
   a failure, data still in flight is dropped (the abort repeated while it
-  keeps coming) and the text after it shown.
+  keeps coming) and the text after it shown. When the board's program dies
+  and the board draws its menu, the abort carries backspaces enough to rub
+  out what reached its prompt as typing.
 - **Saving**: each file as it completes, as a browser download (Blob in 4 MB
   parts, capped by `transferMaxFile`, 512 MB), or into a folder the user
   picks where the browser allows (Chromium: streamed, no cap). A file that

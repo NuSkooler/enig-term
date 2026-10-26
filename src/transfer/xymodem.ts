@@ -39,6 +39,18 @@ export const CRC_REQ = 0x43; // 'C'
 /** Cancel: ten CANs (receivers need two in a row), then backspaces that erase them on a screen. */
 export const CANCEL_SEQ = Uint8Array.from([...new Array(10).fill(CAN), ...new Array(10).fill(BS)]);
 
+/**
+ * What goes out when a transfer ends because the board is showing a screen
+ * again: its program has gone, so what this side sent since the protocol was
+ * last heard (requests, headers, data) reached the board's prompt as typing.
+ * The abort's CANs are dropped there; enough backspaces to rub out that
+ * typing follow (a prompt's field holds little, hence the cap).
+ */
+export function boardLeftAbort(sent: number): Uint8Array {
+    const bs = Math.max(10, Math.min(sent, 256));
+    return Uint8Array.from([...new Array(8).fill(CAN), ...new Array(bs).fill(BS)]);
+}
+
 /** Silence after a 'C' or NAK before a sender takes it as a mode request. */
 export const QUIET_MS = 100;
 /** A receiver asks for the start of a file this often. */
@@ -159,6 +171,8 @@ export function parseYmodemHeader(data: Uint8Array): YHeader | null {
  */
 class Junk {
     bytes: number[] = [];
+    /** Bytes this side sent since the protocol was last heard. */
+    sent = 0;
     private esc = false;
     private csi = 0;
     /** Returns true when the board looks to be drawing a screen again. */
@@ -170,6 +184,7 @@ class Junk {
     }
     clear(): void {
         this.bytes.length = 0;
+        this.sent = 0;
         this.esc = false;
         this.csi = 0;
     }
@@ -220,7 +235,10 @@ export class XySender implements TransferEngine {
     constructor(proto: XySendProtocol, files: SourceFile[], send: (b: Uint8Array) => void, ev: TransferEvents, opts: XyOptions) {
         this.proto = proto;
         this.files = files;
-        this.out = send;
+        this.out = b => {
+            this.junk.sent += b.length;
+            send(b);
+        };
         this.ev = ev;
         this.opts = opts;
         this.ymodem = proto === 'ymodem';
@@ -311,6 +329,7 @@ export class XySender implements TransferEngine {
             return;
         }
         this.log('the board is showing a screen again: transfer over');
+        this.out(boardLeftAbort(this.junk.sent));
         this.end({ ok: false, files: this.filesDone, error: BOARD_LEFT, cancelled: 'remote' });
     }
 
@@ -523,7 +542,10 @@ export class XyReceiver implements TransferEngine {
 
     constructor(proto: XyRecvProtocol, send: (b: Uint8Array) => void, ev: TransferEvents, opts: XyRecvOptions) {
         this.proto = proto;
-        this.out = send;
+        this.out = b => {
+            this.junk.sent += b.length;
+            send(b);
+        };
         this.ev = ev;
         this.opts = opts;
         this.ymodem = proto === 'ymodem';
@@ -622,6 +644,7 @@ export class XyReceiver implements TransferEngine {
             // Not the protocol: status text on the line is skipped, but a
             // screen means the transfer program has gone.
             this.log('the board is showing a screen again: transfer over');
+            this.out(boardLeftAbort(this.junk.sent));
             this.end({ ok: false, files: this.filesDone, error: BOARD_LEFT, cancelled: 'remote' });
         }
     }

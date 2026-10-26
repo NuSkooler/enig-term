@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZmodemEngine, loadZmodem } from '../src/transfer/zmodem.ts';
+import { boardLeftAbort } from '../src/transfer/xymodem.ts';
+import { BOARD_LEFT } from '../src/transfer/types.ts';
 import { LRZSZ, SEXYZ, allBytes, peerCommand, random, runPeer, sha, tmpdir } from './xfer-peers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -206,4 +208,24 @@ test('bytes after the end of the session go back to the screen', { skip: !LRZSZ 
     const rest = new TextDecoder().decode(engine.takeTrailing());
     assert.match(rest, /Back at the menu$/);
     assert.doesNotMatch(rest, /^OO/, 'the "OO" ending the session is the protocol\'s');
+});
+
+test('receiving: the board drawing its screen again ends the transfer; the headers it got as typing are rubbed out', async () => {
+    let t = 0;
+    const out = [];
+    let result = null;
+    const e = new ZmodemEngine('receive', [], b => out.push(...b), { ...quiet(), done: r => (result = r) }, { now: () => t });
+    e.feed(enc('**\x18B00000000000000\r\x8a\x11')); // ZRQINIT
+    for (let i = 0; i < 20 && !out.length; i++) await new Promise(r => setTimeout(r, 10)), e.tick();
+    assert.ok(out.length > 0, 'ZRINIT went out');
+    const sent = out.length;
+    // The board's program has gone; its menu arrives, then nothing.
+    e.feed(enc('\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: '));
+    assert.equal(result, null, 'file data can hold ANSI: not over yet');
+    t += 3100;
+    e.tick();
+    await new Promise(r => setTimeout(r, 10));
+    assert.deepEqual([result?.ok, result?.cancelled, result?.error], [false, 'remote', BOARD_LEFT]);
+    assert.deepEqual(out.slice(sent), Array.from(boardLeftAbort(sent)));
+    assert.equal(new TextDecoder().decode(e.takeTrailing()).endsWith('cmd: '), true, 'the screen is the terminal\'s');
 });

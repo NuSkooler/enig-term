@@ -761,7 +761,10 @@ goes back to the screen.
 - The board cancels (CAN): the transfer fails. When the board's program dies
   instead and the board draws its menu again (ANSI sequences where the
   protocol should be), the transfer ends and that screen is shown (protocol
-  data still ahead of it in the stream is dropped first); otherwise
+  data still ahead of it in the stream is dropped first). What this side sent
+  after the program died (headers, requests, data) reached the board's prompt
+  as typing, so the abort goes out with enough backspaces to rub it out (as
+  many as were sent, 10 to 256; a prompt's field holds little). Otherwise
   ZModem gives up after 60 s without traffic and X/YModem after their retries
   (ten of 10 s). A closed connection ends a transfer at once.
 

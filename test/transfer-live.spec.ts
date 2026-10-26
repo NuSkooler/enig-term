@@ -134,10 +134,9 @@ async function download(page: Page, proto: string, set: string, opts: { panel?: 
     const dl = downloads(page);
     const before = (await screen(page)).split('\n').filter(l => l.trim()).slice(-2).join(' | ');
     log(`download ${proto} ${set}: the screen ends with: ${before}`);
-    // After an aborted transfer the receiver's last headers (with a CR) may
-    // have reached the board's prompt as typing: clear it first.
-    await keys(page, 'Enter');
-    await page.waitForTimeout(800);
+    // (Nothing to clear first: when a transfer ends because the board left,
+    // the engine rubs out what reached its prompt as typing. ENiGMA keeps an
+    // unknown command in the field, so leftovers would break the next one.)
     await keys(page, `D${proto}-${set.toUpperCase()}`, 'Enter');
     if (opts.panel) {
         // X/YModem cannot announce themselves: the user starts receiving once the board is sending.
