@@ -493,6 +493,8 @@ export class XyReceiver implements TransferEngine {
     private errors = 0;
     private cans = 0;
     private requests = 0;
+    /** The sender has started a block: it is there, and has chosen its mode. */
+    private sawStart = false;
     private lastByte = 0;
     private lastSent = 0;
     private phaseSince: number;
@@ -530,8 +532,11 @@ export class XyReceiver implements TransferEngine {
 
     /** Ask for the next block 0 or 1: 'C' for CRC-16, or NAK for a checksum. */
     private request(): void {
-        // Three unanswered 'C's: maybe a checksum-only sender (as sexyz falls back).
-        if (this.crc && this.requests >= 3 && !this.gotData && this.filesDone === 0 && this.header === this.ymodem) {
+        // Three unanswered 'C's: maybe a checksum-only XModem sender (as sexyz
+        // falls back). Never once a sender has started a block (it chose CRC,
+        // and a checksum compared with its CRC passes one block in 256 whatever
+        // it holds), and never for YModem, which is CRC by definition.
+        if (this.crc && this.requests >= 3 && !this.ymodem && !this.sawStart && !this.gotData && this.filesDone === 0) {
             this.crc = false;
             this.log('no answer to C: asking for checksum blocks');
         }
@@ -590,6 +595,7 @@ export class XyReceiver implements TransferEngine {
             this.size = b === STX ? 1024 : 128;
             this.buf[0] = b;
             this.have = 1;
+            this.sawStart = true;
         } else if (b === EOT && !this.header && this.gotData) {
             if (!this.eot) {
                 // Forsberg's double EOT: a line hit cannot fake two.
@@ -621,6 +627,11 @@ export class XyReceiver implements TransferEngine {
             (this.crc ? crc16(data) === ((this.buf[3 + size] << 8) | this.buf[4 + size]) : checksum(data) === this.buf[3 + size]);
         this.have = 0;
         if (!valid) {
+            // A checksum where the sender's CRC high byte sits: it sends CRC blocks.
+            if (!this.crc && num === (~this.buf[2] & 0xff) && crc16(data) >> 8 === this.buf[3 + size]) {
+                this.crc = true;
+                this.log('the sender sends CRC-16 blocks: asking for CRC-16 again');
+            }
             this.bad(`block ${num} failed its check`);
             return;
         }

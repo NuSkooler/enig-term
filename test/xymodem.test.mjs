@@ -274,9 +274,12 @@ test('sender: start timeout, remote CAN CAN, local cancel', () => {
     assert.equal(ev3.result?.cancelled, 'local');
 });
 
-test('receiver: C every 3 s, NAK after three, then the start timeout', () => {
+test('receiver: C every 3 s; XModem falls back to NAK after three (YModem never); then the start timeout', () => {
+    const y = manual((send, now) => new XyReceiver('ymodem', send, sink().ev, { now }));
+    y.wait(REQUEST_MS * 4 + 50);
+    assert.deepEqual(y.take(), [CRC_REQ, CRC_REQ, CRC_REQ, CRC_REQ, CRC_REQ], 'YModem is CRC-16 by definition');
     const ev = sink().ev;
-    const m = manual((send, now) => new XyReceiver('ymodem', send, ev, { now, startTimeout: 20_000 }));
+    const m = manual((send, now) => new XyReceiver('xmodem', send, ev, { now, startTimeout: 20_000 }));
     assert.deepEqual(m.take(), [CRC_REQ]);
     m.wait(REQUEST_MS * 3 + 50);
     assert.deepEqual(m.take(), [CRC_REQ, CRC_REQ, NAK]);
@@ -297,6 +300,30 @@ test('receiver: skips text, NAKs the first EOT, ACKs the second; trailing bytes 
     assert.deepEqual(m.take(), [ACK]);
     assert.deepEqual([r.ev.result?.ok, r.files[0].name, r.files[0].data.length], [true, 'f.txt', 128]);
     assert.equal(new TextDecoder().decode(m.e.takeTrailing()), '\r\nTransfer complete');
+});
+
+test('receiver: never falls back to checksums once a block has begun; CRC blocks read as checksum ones switch it back', () => {
+    // A block began (then broke off): the sender is there and chose CRC-16.
+    const r = sink();
+    const m = manual((send, now) => new XyReceiver('xmodem', send, r.ev, { now }));
+    m.take();
+    m.feed([SOH, 1, 0xfe]);
+    m.wait(REQUEST_MS * 4);
+    assert.ok(!m.take().includes(NAK), 'still asking for CRC-16');
+    m.feed(encodeBlock(1, enc('crc'), 128, true));
+    assert.deepEqual(m.take(), [ACK], 'the CRC block is taken');
+    // In checksum mode (no block yet, no answer to C), a CRC block puts it back to CRC.
+    const r2 = sink();
+    const m2 = manual((send, now) => new XyReceiver('xmodem', send, r2.ev, { now }));
+    m2.wait(REQUEST_MS * 3 + 50);
+    assert.equal(m2.take().at(-1), NAK);
+    let blk = encodeBlock(1, enc('data'), 128, true);
+    if (blk[131] === encodeBlock(1, enc('data'), 128, false)[131]) blk = encodeBlock(1, enc('datb'), 128, true); // not a chance match
+    m2.feed(blk);
+    m2.wait(400);
+    assert.equal(m2.take().at(-1), CRC_REQ, 'asks for CRC-16 again');
+    m2.feed(blk);
+    assert.deepEqual(m2.take(), [ACK]);
 });
 
 test('receiver: a repeated block is acknowledged and dropped; an out-of-sequence one aborts', () => {
