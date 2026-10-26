@@ -27,7 +27,7 @@ button[data-sound="muted"] { color: var(--et-dim); }
 button[data-sound="idle"] { border-color: var(--et-edge); color: var(--et-ink); }
 .settings .group { display: contents; }
 .settings input[type="range"] { width: 7rem; accent-color: var(--et-accent); }
-.settings .note { color: var(--et-dim); }
+.settings .note { color: var(--et-dim); align-self: center; }
 .xfer { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 4; width: min(92%, 32rem); background: rgba(22,22,28,.97);
   border: 1px solid var(--et-edge); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .xfer[hidden] { display: none; }

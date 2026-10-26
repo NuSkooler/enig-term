@@ -166,9 +166,13 @@ export class Transfers {
         return this.st;
     }
 
-    /** A transfer owns the stream (an offer waiting, loading, running). */
+    /**
+     * A transfer owns the line: an offer waiting, loading, running, or the
+     * drain after a failed one (the board's program may still be reading:
+     * keys typed now would go to it, and the repeated abort would erase them).
+     */
     get busy(): boolean {
-        return this.st.phase === 'offer' || this.st.phase === 'loading' || this.st.phase === 'running';
+        return this.st.phase === 'offer' || this.st.phase === 'loading' || this.st.phase === 'running' || this.drain !== null;
     }
 
     get folderName(): string | null {
@@ -321,8 +325,10 @@ export class Transfers {
             this.host.send(ZABORT);
             this.buffered.length = 0;
             this.bufferedBytes = 0;
-            this.stopTicker();
             this.update({ ...this.st, phase: 'cancelled', message: null, error: 'refused' });
+            // The board's program repeats its header until it sees the abort:
+            // drain, so a repeat does not start another offer.
+            this.startDrain([]);
             return;
         }
         if (this.armed) {
@@ -486,19 +492,24 @@ export class Transfers {
         const rest = e?.takeTrailing() ?? new Uint8Array(0);
         const early = this.takeBuffered();
         if (!r.ok && r.error !== BOARD_LEFT) {
-            // Data the board had already sent is still on its way, and a
-            // sender may not have seen the abort yet: drop protocol data until
-            // the line is quiet (saying abort again while it keeps coming),
-            // then show the text that came after it.
-            const now = performance.now();
-            this.drain = { until: now + DRAIN_MAX_MS, last: now, parts: [], kept: 0, dropped: 0, binaryAt: 0, abortAt: now, aborts: 0 };
-            this.drained(rest);
-            this.drained(early);
-            this.startTicker();
+            this.startDrain([rest, early]);
             return;
         }
         if (rest.length) this.incoming(rest);
         if (early.length) this.incoming(early);
+    }
+
+    /**
+     * After a failed or refused transfer: data the board had already sent is
+     * still on its way, and its program may not have seen the abort yet. Drop
+     * protocol data until the line is quiet (saying abort again while it keeps
+     * coming), then show the text that came after it.
+     */
+    private startDrain(first: Uint8Array[]): void {
+        const now = performance.now();
+        this.drain = { until: now + DRAIN_MAX_MS, last: now, parts: [], kept: 0, dropped: 0, binaryAt: 0, abortAt: now, aborts: 0 };
+        for (const p of first) this.drained(p);
+        this.startTicker();
     }
 
     /** Keep the tail of what arrives while draining; note when it is protocol data. */
@@ -548,6 +559,8 @@ export class Transfers {
         const text = textTail(all);
         const dropped = d.dropped + all.length - text.length;
         if (dropped) this.host.log(`transfer: dropped ${dropped} bytes of protocol data after the end${d.aborts ? ` (abort sent again ${d.aborts} times)` : ''}`);
+        // The line is the terminal's again (the host sends a deferred NAWS, keys go out).
+        this.update(this.st, true);
         if (text.length) this.incoming(text);
     }
 
