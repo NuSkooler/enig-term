@@ -39,7 +39,10 @@ test('host input dials; URL ?endpoint=&connect=1 works; the button reconnects', 
     await host.press('Enter');
     await waitState(page, 'connected');
     await page.keyboard.type('hi');
-    await expect.poll(async () => String.fromCharCode(...((await fakeLog(page, id))[0]?.sent ?? [])).endsWith('hi')).toBe(true);
+    // The typed bytes may come before or between our answers to the host's
+    // probes and to the CTDA requests the echo host bounces back (below).
+    const typed = async () => String.fromCharCode(...((await fakeLog(page, id))[0]?.sent ?? [])).split('\x1b[<0;1;2;3;5c').join('');
+    await expect.poll(async () => (await typed()).includes('hi')).toBe(true);
     // The echo host bounces our CTDA answer back, which parses as a new CTDA
     // request: the answer-loop guard must stop that.
     const ctda = String.fromCharCode(...(await fakeLog(page, id))[0].sent).split('[<0;1;2;3;5c').length - 1;
