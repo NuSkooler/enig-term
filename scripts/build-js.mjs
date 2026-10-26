@@ -95,13 +95,16 @@ if (fs.existsSync(path.join(dist, 'config.json'))) throw new Error('dist/config.
 
 function creditsPage(version, m) {
     const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-    const rows = Object.entries(m.slots)
-        .map(([slot, e]) => {
-            const what = e.refused ? `<td colspan="2" class="no">not available: ${esc(e.refused)}</td>` : `<td>IBM VGA, ${esc(e.codepage)}${e.substitute ? ` <span class="note">(${esc(e.substitute)})</span>` : ''}</td><td>${esc(e.license)}</td>`;
-            return `<tr><td>${slot}</td><td>${esc(e.name)}</td>${what}</tr>`;
-        })
+    const pcRows = Object.entries(m.slots).map(([slot, e]) => {
+        const what = e.refused ? `<td colspan="2" class="no">not available: ${esc(e.refused)}</td>` : `<td>IBM VGA, ${esc(e.codepage)}${e.substitute ? ` <span class="note">(${esc(e.substitute)})</span>` : ''}</td><td>${esc(e.license)}</td>`;
+        return [Number(slot), `<tr><td>${slot}</td><td>${esc(e.name)}</td>${what}</tr>`];
+    });
+    const amigaRows = [37, 38, 39, 40, 41, 42].map(n => [n, `<tr><td>${n}</td><td>${esc(['P0T NOoDLE', "mO'sOul", 'MicroKnight Plus', 'Topaz Plus', 'MicroKnight', 'Topaz'][n - 37])} (Amiga)</td><td colspan="2">installed by the site operator, if at all (see below)</td></tr>`]);
+    const rows = [...pcRows, ...amigaRows]
+        .sort((a, b) => a[0] - b[0])
+        .map(r => r[1])
         .join('\n');
-    const amiga = [37, 38, 39, 40, 41, 42].map(n => `<tr><td>${n}</td><td>${esc(['P0T NOoDLE', "mO'sOul", 'MicroKnight Plus', 'Topaz Plus', 'MicroKnight', 'Topaz'][n - 37])} (Amiga)</td><td colspan="2">installed by the site operator, if at all (see below)</td></tr>`).join('\n');
+    const loadable = `<tr><td>${m.firstLoadableSlot}-255</td><td colspan="3">loaded by the board (DCS CTerm:Font), if at all</td></tr>`;
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -142,7 +145,7 @@ Fonts the terminal does not have are refused, not substituted.</p>
 <div class="table"><table>
 <tr><th>Slot</th><th>SyncTERM font</th><th>Drawn with</th><th>Licence</th></tr>
 ${rows}
-${amiga}
+${loadable}
 </table></div>
 
 <h2>Amiga fonts</h2>

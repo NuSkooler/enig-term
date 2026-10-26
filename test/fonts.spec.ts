@@ -37,7 +37,7 @@ test('a CP437 session fetches the manifest and one font file; other fonts load w
     // KOI8-R: the stream is held at the selection until the font is in, then the text uses it.
     await page.evaluate(([csi]) => (window as any).enigTerm.write(`${csi}0;2 D${csi}1;1H\xf7\xe1${csi}=1n`), [CSI]);
     await settle(page);
-    expect(text(await sent(page))).toBe(`${CSI}=1;43;0;2;0;0;0n`);
+    expect(text(await sent(page))).toBe(`${CSI}=1;46;0;2;0;0;0n`);
     expect(await page.evaluate(() => (window as any).enigTerm.core.core.font_page())).toBe(2);
     expect((await fontRequests(page)).slice(2)).toEqual(['/fonts/pc/koi8-r-8x16.psf']);
 });
@@ -45,9 +45,11 @@ test('a CP437 session fetches the manifest and one font file; other fonts load w
 test('fonts we have no licensed font for are refused (font state report), with no fetch and no hold', async ({ page }) => {
     await open(page);
     await captureSent(page);
-    await write(page, `${CSI}0;32 D${CSI}=1n`);
-    expect(await page.evaluate(() => (window as any).enigTerm.holding)).toBe(false);
-    expect(text(await sent(page))).toBe(`${CSI}=1;43;1;0;0;0;0n`);
+    for (const font of [32, 43, 44, 45]) {
+        await write(page, `${CSI}0;${font} D${CSI}=1n`);
+        expect(await page.evaluate(() => (window as any).enigTerm.holding)).toBe(false);
+        expect(text(await sent(page))).toBe(`${CSI}=1;46;1;0;0;0;0n`);
+    }
     expect(await fontRequests(page)).toEqual(['/fonts/manifest.json', '/fonts/pc/cp437-8x16.psf']);
 });
 
@@ -57,7 +59,7 @@ test('without Amiga fonts on the site, an Amiga font is refused and the look sta
     await captureSent(page);
     await page.evaluate(([csi]) => (window as any).enigTerm.write(`${csi}0;42 D${csi}=1n`), [CSI]);
     await settle(page);
-    expect(text(await sent(page))).toBe(`${CSI}=1;43;1;0;0;0;0n`);
+    expect(text(await sent(page))).toBe(`${CSI}=1;46;1;0;0;0;0n`);
     const st = await page.evaluate(() => ({ p: (window as any).enigTerm.activeProfile, c: (window as any).enigTerm.charset }));
     expect(st).toEqual({ p: 'pc', c: 'cp437' });
 });
@@ -69,15 +71,15 @@ test('CSI = 2 n and = 3 n through the shell; Ps1 attribute slots in = 1 n', asyn
     expect(text(await sent(page))).toBe(`${CSI}=2;7;25;31;33n${CSI}=3;16;8n`);
     await page.evaluate(([csi]) => (window as any).enigTerm.write(`${csi}1;24 D${csi}=1n`), [CSI]);
     await settle(page);
-    expect(text(await sent(page))).toBe(`${CSI}=1;43;0;0;24;0;0n`);
+    expect(text(await sent(page))).toBe(`${CSI}=1;46;0;0;24;0;0n`);
 });
 
-test('DCS CTerm:Font into slot 43, selected and drawn', async ({ page }) => {
+test('DCS CTerm:Font into slot 46, selected and drawn', async ({ page }) => {
     await open(page);
     await captureSent(page);
     const b64 = Buffer.from(new Uint8Array(256 * 16).fill(0xff)).toString('base64');
-    await write(page, `${ESC}PCTerm:Font:43:${b64}${ST}${CSI}0;43 D${CSI}=1n${CSI}2J${CSI}1;1H${CSI}0;32;40mA`);
-    expect(text(await sent(page))).toBe(`${CSI}=1;43;0;43;0;0;0n`);
+    await write(page, `${ESC}PCTerm:Font:46:${b64}${ST}${CSI}0;46 D${CSI}=1n${CSI}2J${CSI}1;1H${CSI}0;32;40mA`);
+    expect(text(await sent(page))).toBe(`${CSI}=1;46;0;46;0;0;0n`);
     const [r, g, b] = await cellColour(page, 0, 0);
     expect([r < 20, g > 150, b < 20]).toEqual([true, true, true]);
 });

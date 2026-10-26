@@ -82,7 +82,11 @@ pub fn last_panic() -> String {
 const ENGINE_SCROLLBACK_CHUNKS: usize = 0;
 
 /// First CTerm font slot open to `DCS CTerm:Font` (reported as pF in `CSI = 1 n`).
-const FIRST_LOADABLE_SLOT: usize = 43;
+/// The current CTerm manual defines built-in fonts up to 45 (43 Prestel,
+/// 44 Atari ST, 45 RIPterm) and loadable ones above them; 43-45 have no
+/// licensed font here, so a DCS load there is refused like any other
+/// built-in slot, and a selection of them is refused (no font loaded).
+const FIRST_LOADABLE_SLOT: usize = 46;
 
 /// Default cap on one audio APC string kept for the shell (the shell sets its
 /// own with `set_apc_limit`). icy_parser_core itself stops buffering a string

@@ -146,14 +146,14 @@ test('cell height follows the screen mode: 50 rows use 8-pixel fonts, and the sh
 test('DCS fonts: kept at their own height; selectable only in a mode of that height (as in SyncTERM)', () => {
     const c = withFonts(new Core(80, 25, 'ansi'));
     const font8 = Buffer.from(new Uint8Array(256 * 8).fill(0x81)).toString('base64');
-    c.feed(bytes(`${ESC}PCTerm:Font:44:${font8}${ST}${CSI}0;44 D${CSI}=1n`));
+    c.feed(bytes(`${ESC}PCTerm:Font:47:${font8}${ST}${CSI}0;47 D${CSI}=1n`));
     let ev = events(c);
     const load = ev.find(e => e.t === 'fontload');
     assert.deepEqual([load.ok, load.height, load.width], [true, 8, 8]);
     assert.deepEqual([ev.find(e => e.t === 'font').reason, ev.find(e => e.k === 'fontstate').result], ['missing', 1]);
     c.resize(80, 50);
     c.load_font(0, 'cp437', pcFont('cp437', 8));
-    c.feed(bytes(`${CSI}0;44 D${CSI}=1n`));
+    c.feed(bytes(`${CSI}0;47 D${CSI}=1n`));
     ev = events(c);
     assert.deepEqual([ev.find(e => e.t === 'font').ok, ev.find(e => e.k === 'fontstate').result], [true, 0]);
 });
@@ -161,9 +161,9 @@ test('DCS fonts: kept at their own height; selectable only in a mode of that hei
 test('DCS font reloaded into a slot in use changes what its cells show at once', () => {
     const c = withFonts(new Core(80, 25, 'ansi'));
     const font = v => Buffer.from(new Uint8Array(256 * 16).fill(v)).toString('base64');
-    c.feed(bytes(`${ESC}PCTerm:Font:43:${font(0x80)}${ST}${CSI}0;43 D${CSI}1;1H${CSI}37;40mA`));
+    c.feed(bytes(`${ESC}PCTerm:Font:46:${font(0x80)}${ST}${CSI}0;46 D${CSI}1;1H${CSI}37;40mA`));
     assert.deepEqual([pixel(c, 0, 0)[0] > 0, pixel(c, 1, 0)[0] > 0], [true, false]);
-    c.feed(bytes(`${ESC}PCTerm:Font:43:${font(0x40)}${ST}`));
+    c.feed(bytes(`${ESC}PCTerm:Font:46:${font(0x40)}${ST}`));
     assert.deepEqual([pixel(c, 0, 0)[0] > 0, pixel(c, 1, 0)[0] > 0], [false, true]);
 });
 

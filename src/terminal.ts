@@ -756,7 +756,7 @@ export class Terminal {
             text = `This board asked for an Amiga font (${name}), which this site has no ${this.core.modeFontHeight}-pixel version of; the current font stays.`;
         } else {
             const why = this.fonts.describe(font)?.refused;
-            text = `This board asked for ${font <= 42 ? `SyncTERM font ${font} (${name})` : `font slot ${font}, which it has not loaded`}, which this terminal does not have${why ? ` (${why})` : ''}; the current font stays.`;
+            text = `This board asked for ${font <= 45 ? `SyncTERM font ${font} (${name})` : `font slot ${font}, which it has not loaded`}, which this terminal does not have${why ? ` (${why})` : ''}; the current font stays.`;
         }
         console.warn(`enig-term: ${text}`);
         this.logLine(`notice: ${text}`);

@@ -42,7 +42,7 @@ pub fn placeholder(height: u8) -> BitFont {
 
 #[derive(Default)]
 pub struct FontState {
-    /// (slot, height) -> font: the shell's (slots 0..=42) and DCS-loaded (43..=255).
+    /// (slot, height) -> font: the shell's (slots 0..=45) and DCS-loaded (46..=255).
     pub fonts: HashMap<(u8, u8), BitFont>,
     /// Font numbers in the four CTerm attribute slots (Ps1 0..=3).
     pub slots: [u8; 4],

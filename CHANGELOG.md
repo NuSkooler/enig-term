@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased: font slots 43-45
+
+- **DCS-loaded fonts start at slot 46** (`pF = 46` in `CSI = 1 n`). The
+  current CTerm manual adds built-in fonts 43 (Prestel), 44 (Atari ST) and
+  45 (RIPterm) and puts loadable fonts above them. enig-term has no licensed
+  font for 43-45: selecting one is refused like the other unlicensed
+  built-ins (`pR = 1`, a one-time notice naming the font), and a
+  `DCS CTerm:Font` into 43-45 is refused like one into 0-42. The font
+  manifest lists them as refused; `credits.html` shows the slots in order,
+  with 46-255 as the board's.
+
 ## Unreleased: Phase 3, audio
 
 - **CTerm audio APC**, complete per the current manual's "Audio APCs"

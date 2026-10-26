@@ -28,7 +28,7 @@ export function rng(seed) {
     return { next, int, pick };
 }
 
-const NUMS = [0, 1, 2, 3, 5, 7, 24, 25, 26, 42, 43, 79, 80, 81, 99, 132, 255, 256, 999, 9999, 32767, 65535, 65536, 99999999];
+const NUMS = [0, 1, 2, 3, 5, 7, 24, 25, 26, 42, 43, 45, 46, 79, 80, 81, 99, 132, 255, 256, 999, 9999, 32767, 65535, 65536, 99999999];
 
 function param(r) {
     return r.next() < 0.7 ? String(r.pick(NUMS)) : String(r.int(300));

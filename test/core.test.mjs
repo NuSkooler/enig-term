@@ -129,16 +129,16 @@ test('font select 42 works once the shell has loaded a font for it', () => {
     const ev = events(c);
     assert.ok(ev.find(e => e.t === 'font').ok);
     const st = ev.find(e => e.k === 'fontstate');
-    assert.deepEqual([st.first, st.result, st.slots[0]], [43, 0, 42]);
+    assert.deepEqual([st.first, st.result, st.slots[0]], [46, 0, 42]);
     assert.equal(c.font_page(), 42);
 });
 
-test('dcs font: CTerm:Font loads a slot that SP D can select (slot >= 43)', () => {
+test('dcs font: CTerm:Font loads a slot that SP D can select (slot >= 46)', () => {
     const c = new Core(80, 25, 'ansi');
     const b64 = Buffer.from(testFont8x16()).toString('base64');
-    c.feed(bytes(`${ESC}PCTerm:Font:43:${b64}${ST}${CSI}0;43 D${CSI}=1n${CSI}1;1H${CSI}37;40m\x41`));
+    c.feed(bytes(`${ESC}PCTerm:Font:46:${b64}${ST}${CSI}0;46 D${CSI}=1n${CSI}1;1H${CSI}37;40m\x41`));
     const ev = events(c);
-    assert.ok(ev.find(e => e.t === 'fontload' && e.slot === 43));
+    assert.ok(ev.find(e => e.t === 'fontload' && e.slot === 46 && e.ok));
     assert.equal(ev.find(e => e.k === 'fontstate').result, 0, 'selection of a loaded slot reports success');
     c.render(true);
     const px = framePixels(c, memory);
@@ -146,6 +146,20 @@ test('dcs font: CTerm:Font loads a slot that SP D can select (slot >= 43)', () =
     // glyph 0x41 row 0 = 0x41: bits 01000001 -> pixels 1 and 7 lit
     const lit = x => px[(0 * W + x) * 4] > 0;
     assert.deepEqual([0, 1, 2, 7].map(lit), [false, true, false, true]);
+});
+
+test('dcs font: 43-45 are CTerm built-ins (Prestel, Atari ST, RIPterm): a DCS load there is refused, and so is selecting them', () => {
+    const c = new Core(80, 25, 'ansi');
+    const b64 = Buffer.from(testFont8x16()).toString('base64');
+    for (const slot of [43, 44, 45]) {
+        c.feed(bytes(`${ESC}PCTerm:Font:${slot}:${b64}${ST}${CSI}0;${slot} D${CSI}=1n`));
+        const ev = events(c);
+        assert.equal(ev.find(e => e.t === 'fontload').ok, false, `DCS into ${slot}`);
+        assert.deepEqual(ev.find(e => e.t === 'font'), { t: 'font', slot: 0, font: slot, ok: false, reason: 'missing', height: 16 });
+        const st = ev.find(e => e.k === 'fontstate');
+        assert.deepEqual([st.first, st.result, st.slots[0]], [46, 1, 0]);
+        assert.equal(c.has_font(slot), false);
+    }
 });
 
 test('runtime load_font overrides a built-in slot', () => {
@@ -327,7 +341,7 @@ test('host-reachable panic paths are guarded (each on a fresh instance)', async 
         'scroll left with margins past the screen': `${CSI}1;9999r${CSI} @`,
         'DCS font into slot 0, 0 rows high': `${ESC}PCTerm:Font:0:${font(65536)}${ST}`,
         'DCS font into slot 0, 40 rows high': `${ESC}PCTerm:Font:0:${psf1(40)}${ST}`,
-        'DCS 40-row font into 43, selected': `${ESC}PCTerm:Font:43:${psf1(40)}${ST}${CSI}0;43 DX`,
+        'DCS 40-row font into 46, selected': `${ESC}PCTerm:Font:46:${psf1(40)}${ST}${CSI}0;46 DX`,
     };
     for (const [name, seq] of Object.entries(cases)) {
         const { Core: C } = await loadCore({ fresh: true });
@@ -348,7 +362,7 @@ test('host-reachable panic paths are guarded (each on a fresh instance)', async 
     }
     const c = new Core(80, 25, 'ansi');
     c.feed(bytes(`${ESC}PCTerm:Font:0:${font(4096)}${ST}`));
-    assert.equal(events(c).find(e => e.t === 'fontload').ok, false, 'slots below 43 are refused');
+    assert.equal(events(c).find(e => e.t === 'fontload').ok, false, 'slots below 46 are refused');
 });
 
 test('huge repeat counts are clamped to the screen', () => {

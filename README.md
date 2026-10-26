@@ -388,7 +388,8 @@ manual):
 | 32-35 | Commodore 64/128 | **refused**: no licensed font |
 | 36 | Atari | **refused**: no licensed font |
 | 37-42 | P0T NOoDLE, mO'sOul, MicroKnight Plus, Topaz Plus, MicroKnight, Topaz | operator-installed Amiga fonts, else **refused** |
-| 43-255 | `DCS CTerm:Font` | loaded by the host |
+| 43, 44, 45 | Prestel, Atari ST, RIPterm | **refused**: no licensed font (CTerm built-ins; a DCS load into them is refused too) |
+| 46-255 | `DCS CTerm:Font` | loaded by the host |
 
 Style variants (thin, swiss, (b), (c), wide) are drawn in the one IBM VGA
 design; `credits.html` lists them. A refused selection changes nothing on
@@ -408,8 +409,9 @@ screen and reports `pR = 1` in `CSI = 1 n`; a selection never draws blank.
   meaning of 35, not icy_engine's cursor blink). Like everything in
   icy_engine, these apply to text written afterwards (fonts are per cell).
   Ps1 above 3 is refused.
-- **DCS `CTerm:Font:<slot>:<base64>`**: slots 43-255 (`pF = 43` in
-  `CSI = 1 n`), any drawable size (8 wide, 1-32 high), kept at its own
+- **DCS `CTerm:Font:<slot>:<base64>`**: slots 46-255 (`pF = 46` in
+  `CSI = 1 n`; the current CTerm manual puts loadable fonts above its
+  built-ins, which now end at 45), any drawable size (8 wide, 1-32 high), kept at its own
   height. Reloading a slot in use updates its cells at once.
 - **SAUCE**: letter spacing (9-dot) and iCE apply; the SAUCE font name is not
   mapped to our fonts yet (the file renders with slot 0, CP437 at the mode's
@@ -656,7 +658,7 @@ treats as a failed decode.
   ("enig-term", the package version); CTDA `CSI < 0;1;2;3;5 c` (DCS fonts,
   bright backgrounds, OSC palette, font selection, numbered as in the current
   CTerm manual); CPR; `CSI 5 n`; `CSI 255 n` as a CPR of the screen size;
-  `CSI = 1 n` as `CSI = 1 ; 43 ; pR ; pS0 ; pS1 ; pS2 ; pS3 n` (pR 0 the last
+  `CSI = 1 n` as `CSI = 1 ; 46 ; pR ; pS0 ; pS1 ; pS2 ; pS3 n` (pR 0 the last
   selection worked, 1 refused, 99 none yet); `CSI = 2 n` with the set modes
   among 6, 7, 25, 31, 32, 33, 34, 35 (`CSI = 2 ; n` when none); `CSI = 3 n` as
   `CSI = 3 ; <cell height> ; <cell width> n` (width 9 with SAUCE letter
@@ -676,7 +678,7 @@ treats as a failed decode.
   in a minute it stops and asks for a reload.
 - **Hardening** (from an audit of icy_engine and fuzzing): horizontal scrolls
   are padded, margins are kept inside the screen, DCS fonts are limited to
-  slots 43-255 and drawable sizes, repeat counts are clamped to the screen,
+  slots 46-255 and drawable sizes, repeat counts are clamped to the screen,
   and SyncTERM inline images (JXL/PPM) are off. Each kind of host request is
   answered at most 8 times a second, so an echoing host cannot loop on our
   replies (a CTDA answer echoed back parses as a new CTDA request).
