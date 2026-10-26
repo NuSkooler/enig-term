@@ -303,3 +303,27 @@ test('scrollback view: wheel, pages, drag and return to live', () => {
     v.wheel(500, 0, 16); // down at live: stays
     assert.equal(offset, 0);
 });
+
+test('config: transfers, zmodemDetect and transferMaxFile; zmodemDetect is a user setting', () => {
+    const warns = [];
+    const o = sanitize({ transfers: 'off', zmodemDetect: 'ask', transferMaxFile: 64 }, w => warns.push(w));
+    assert.deepEqual(o, { transfers: false, zmodemDetect: 'ask', transferMaxFile: 64 });
+    assert.deepEqual(sanitize({ zmodemDetect: 'always', transferMaxFile: 0 }, w => warns.push(w)), {});
+    assert.equal(warns.length, 2);
+    assert.deepEqual([DEFAULTS.transfers, DEFAULTS.zmodemDetect, DEFAULTS.transferMaxFile], [true, 'auto', 512]);
+    assert.equal(userMayChange(resolve({}), 'zmodemDetect'), true);
+    assert.equal(userMayChange(resolve({ config: { lock: ['zmodemDetect'] } }), 'zmodemDetect'), false);
+    assert.equal(fromUrlParams(new URLSearchParams('zmodemDetect=off')).opts.zmodemDetect, 'off');
+});
+
+test('Telnet: every byte value survives escaping out and decoding in (transfers run above Telnet)', () => {
+    const data = Uint8Array.from({ length: 512 }, (_, i) => i & 0xff);
+    const wire = TelnetClient.escape(data);
+    assert.equal(wire.length, data.length + 2, 'each 0xFF doubled');
+    const t = new TelnetClient({ getSize: () => ({ cols: 80, rows: 25 }) });
+    // split the stream between the two IACs of a pair, too
+    const cut = wire.indexOf(IAC) + 1;
+    const a = t.receive(wire.subarray(0, cut));
+    const b = t.receive(wire.subarray(cut));
+    assert.deepEqual(Array.from([...a.data, ...b.data]), Array.from(data));
+});
