@@ -1,0 +1,29 @@
+diff --git a/crates/icy_net/src/protocol/zmodem/rz.rs b/crates/icy_net/src/protocol/zmodem/rz.rs
+index 2afe0cd..1fea37c 100644
+--- a/crates/icy_net/src/protocol/zmodem/rz.rs
++++ b/crates/icy_net/src/protocol/zmodem/rz.rs
+@@ -2,6 +2,7 @@
+ // Changed for enig-term (patches/icy_board/0002-zmodem-rz-detect-can-abort-in-subpacket.patch): a CAN abort inside file data ends the transfer.
+ // Changed for enig-term (patches/icy_board/0004-zmodem-host-reads-and-skips.patch): the host may refuse (skip) an offered file.
+ // Changed for enig-term (patches/icy_board/0006-zmodem-rz-overlong-subpacket-is-recoverable.patch): an overlong subpacket is asked for again.
++// Changed for enig-term (patches/icy_board/0008-zmodem-rz-stale-zdata-after-a-file.patch): a stale ZDATA after a file ended is ignored.
+ #![allow(clippy::unused_self, clippy::wildcard_imports)]
+ use std::{
+     cmp::Ordering,
+@@ -558,6 +559,16 @@ impl Rz {
+                 transfer_state.recieve_state.log_info(format!("ZDATA received at offset {}", offset));
+ 
+                 if self.cur_out_file.is_none() {
++                    // enig-term: after a file was taken, a ZDATA is a late answer to an
++                    // earlier ZRPOS (the sender's resend was still on its way): stale.
++                    // Ignore it and say ZRINIT again, as for the end of that file.
++                    if self.received_files > 0 {
++                        transfer_state
++                            .recieve_state
++                            .log_warning(format!("Stale ZDATA at offset {} after the file ended, ignored", offset));
++                        self.send_zrinit(com).await?;
++                        return Ok(false);
++                    }
+                     transfer_state.recieve_state.log_error("ZDATA received before ZFILE".to_string());
+                     self.cancel(com).await?;
+                     return Err(ZModemError::ZDataBeforeZFILE.into());

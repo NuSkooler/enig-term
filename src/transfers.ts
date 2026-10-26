@@ -491,8 +491,11 @@ export class Transfers {
         this.update({ ...this.st, phase, error: r.ok ? null : r.error, message: null, rate: 0, eta: null }, true);
         const rest = e?.takeTrailing() ?? new Uint8Array(0);
         const early = this.takeBuffered();
-        if (!r.ok && r.error !== BOARD_LEFT) {
-            this.startDrain([rest, early]);
+        if (!r.ok) {
+            // When the board is drawing its screen again its program has gone:
+            // nothing to abort, but protocol data may still be ahead of the
+            // screen in the stream (a browser can lag megabytes behind).
+            this.startDrain([rest, early], r.error !== BOARD_LEFT);
             return;
         }
         if (rest.length) this.incoming(rest);
@@ -505,9 +508,9 @@ export class Transfers {
      * protocol data until the line is quiet (saying abort again while it keeps
      * coming), then show the text that came after it.
      */
-    private startDrain(first: Uint8Array[]): void {
+    private startDrain(first: Uint8Array[], abort = true): void {
         const now = performance.now();
-        this.drain = { until: now + DRAIN_MAX_MS, last: now, parts: [], kept: 0, dropped: 0, binaryAt: 0, abortAt: now, aborts: 0 };
+        this.drain = { until: now + DRAIN_MAX_MS, last: now, parts: [], kept: 0, dropped: 0, binaryAt: 0, abortAt: now, aborts: abort ? 0 : DRAIN_ABORTS };
         for (const p of first) this.drained(p);
         this.startTicker();
     }

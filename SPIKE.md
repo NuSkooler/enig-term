@@ -435,7 +435,7 @@ Date: 2026-10-26. **(V)** verified by running, **(I)** inferred.
 `enig-term-zmodem.wasm`). It passed the same harness where zmodem.js failed
 everything against sexyz, it recovers from damaged data where zmodem.js by
 design does not, and it is maintained. The cost is a 70 KB gzipped WASM,
-loaded only for a transfer, and seven small patches (five of them fixes to
+loaded only for a transfer, and eight small patches (six of them fixes to
 offer upstream).
 
 ## Candidates
@@ -515,6 +515,10 @@ stream" and the fake BBS):
 7. **0007**: the ZFILE info carried only name and length; sexyz then dated
    ENiGMA uploads in the year 2446 (V, the file area). It now carries the
    modification time and what is left of the batch.
+8. **0008**: in the live matrix a ZModem download whose file had arrived
+   whole failed at the end with "Got ZDATA before ZFILE": a resend answering
+   an earlier ZRPOS reached the receiver after it had closed the file. A
+   stale ZDATA after a file is now ignored (ZRINIT again).
 
 The one remaining harness failure is sexyz's: it cannot send an empty file
 with ZModem. It rejects the receiver's ZRPOS 0 ("Received INVALID ZRPOS
@@ -550,9 +554,9 @@ timeout, or the board's menu when it returns).
     subpacket as the abort.
 27. Patch 0003: ignore a repeated ZRPOS for the same offset while the
     restart is in flight.
-28. Patches 0005, 0006 and 0007: skip noise before headers in the sender,
-    treat an overlong subpacket as recoverable, and send the modification
-    time (and files/bytes left) in ZFILE.
+28. Patches 0005-0008: skip noise before headers in the sender, treat an
+    overlong subpacket as recoverable, send the modification time (and
+    files/bytes left) in ZFILE, and ignore a stale ZDATA after a file.
 29. A receive-side inactivity timeout and the ZRINIT resend (commented out
     in `rz.rs`), so a vanished sender does not leave the receiver waiting.
 30. Expose the receiver's state (in a file or between frames), so a host can
