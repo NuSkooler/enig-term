@@ -12,12 +12,14 @@
     "build": "npm run build:wasm && npm run build:js",
     "typecheck": "tsc --noEmit",
     "serve": "node scripts/serve.mjs",
-    "test:unit": "node --test test/core.test.mjs test/fonts.test.mjs test/shell.test.mjs test/fonts-tools.test.mjs",
+    "test:unit": "node --test test/core.test.mjs test/fonts.test.mjs test/shell.test.mjs test/fonts-tools.test.mjs test/audio-core.test.mjs test/audio.test.mjs",
     "test:browser": "playwright test",
     "test": "npm run typecheck && npm run test:unit && npm run test:browser",
     "test:live": "playwright test --project=chromium test/live.spec.ts",
     "setup:webkit": "node scripts/webkit-deps.mjs",
     "fuzz": "node test/fuzz-core.mjs",
+    "fuzz:audio": "node test/fuzz-audio.mjs",
+    "fixtures:audio": "node test/fixtures/make-audio.mjs",
     "goldens": "node test/goldens.mjs --write",
     "bench": "ENIG_TERM_BENCH=1 playwright test test/bench.spec.ts && node test/bench-core.mjs",
     "fixtures": "node test/fixtures/make-fixtures.mjs",
@@ -26,7 +28,10 @@
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",
+    "@wasm-audio-decoders/ogg-vorbis": "0.1.20",
+    "ansi-bbs-utils": "0.2.1",
     "esbuild": "^0.25.0",
+    "opus-decoder": "0.7.12",
     "typescript": "^5.8.0"
   }
 }
