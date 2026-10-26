@@ -8,6 +8,7 @@ import { VERSION_STRING } from './replies.ts';
 
 export type { EnigTermHandle, MountOptions } from './api.ts';
 export type { Options } from './config.ts';
+export type { TransferProtocol, TransferStatus } from './transfers.ts';
 export { mount, defineElement, EnigTermElement };
 export const version = VERSION_STRING;
 

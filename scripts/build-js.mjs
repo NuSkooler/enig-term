@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
 const wasm = path.join(root, 'build', 'wasm', 'enig_term_core_bg.wasm');
-if (!fs.existsSync(wasm)) {
-    console.error('build/wasm missing: run npm run build:wasm first');
+const zwasm = path.join(root, 'build', 'wasm-zmodem', 'enig_term_zmodem_bg.wasm');
+if (!fs.existsSync(wasm) || !fs.existsSync(zwasm)) {
+    console.error('build/wasm or build/wasm-zmodem missing: run npm run build:wasm first');
     process.exit(1);
 }
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -55,8 +56,21 @@ await build({
     banner: { js: `/* enig-term ${pkg.version} audio engine | BSD-2-Clause */` },
 });
 
+// The transfer engines (X/YModem, and ZModem with its WASM), imported the
+// first time a transfer starts.
+fs.copyFileSync(zwasm, path.join(dist, 'enig-term-zmodem.wasm'));
+await build({
+    ...common,
+    entryPoints: [path.join(root, 'src', 'transfer', 'index.ts')],
+    outfile: path.join(dist, 'enig-term-xfer.js'),
+    define: { __ENIG_TERM_ZMODEM_HASH__: JSON.stringify(hashOf('enig-term-zmodem.wasm')) },
+    banner: { js: `/* enig-term ${pkg.version} file transfers | BSD-2-Clause | includes icy_net's ZModem (icy_board, Apache-2.0), see NOTICE */` },
+    metafile: true,
+}).then(r => fs.writeFileSync(path.join(root, 'build', 'meta-xfer.json'), JSON.stringify(r.metafile)));
+
 await build({
     entryPoints: [path.join(root, 'src', 'main.ts')],
+    metafile: true,
     bundle: true,
     format: 'esm',
     target: ['es2022', 'safari16'],
@@ -68,11 +82,12 @@ await build({
         __ENIG_TERM_WASM_HASH__: JSON.stringify(wasmHash),
         __ENIG_TERM_FONTS_HASH__: JSON.stringify(fontsHash),
         __ENIG_TERM_AUDIO_HASH__: JSON.stringify(hashOf('enig-term-audio.js')),
+        __ENIG_TERM_XFER_HASH__: JSON.stringify(hashOf('enig-term-xfer.js')),
     },
     legalComments: 'none',
     banner: { js: `/* enig-term ${pkg.version} | BSD-2-Clause | includes icy_tools (MIT OR Apache-2.0), see NOTICE */` },
     logLevel: 'warning',
-});
+}).then(r => fs.writeFileSync(path.join(root, 'build', 'meta-main.json'), JSON.stringify(r.metafile)));
 fs.copyFileSync(wasm, path.join(dist, 'enig_term_core_bg.wasm'));
 for (const f of ['index.html', 'config.example.json', 'LICENSE', 'NOTICE']) fs.copyFileSync(path.join(root, f), path.join(dist, f));
 
@@ -178,4 +193,4 @@ const size = f => {
     return `${f}: ${b.length} B (gzip ${zlib.gzipSync(b, { level: 9 }).length} B)`;
 };
 const pc437 = Object.values(fontManifest.slots[0].files).map(f => fontManifest.files[f].bytes);
-console.log([size('enig-term.js'), size('enig-term-audio.js'), size('enig-term-ogg.js'), size('enig_term_core_bg.wasm'), size('fonts/manifest.json'), `fonts: CP437 8x16 ${fontManifest.files['pc/cp437-8x16.psf'].bytes} B (all heights ${pc437.reduce((a, b) => a + b, 0)} B)`, `version ${pkg.version}, wasm ${wasmHash}, fonts ${fontsHash}`].join('\n'));
+console.log([size('enig-term.js'), size('enig-term-audio.js'), size('enig-term-ogg.js'), size('enig-term-xfer.js'), size('enig-term-zmodem.wasm'), size('enig_term_core_bg.wasm'), size('fonts/manifest.json'), `fonts: CP437 8x16 ${fontManifest.files['pc/cp437-8x16.psf'].bytes} B (all heights ${pc437.reduce((a, b) => a + b, 0)} B)`, `version ${pkg.version}, wasm ${wasmHash}, fonts ${fontsHash}`].join('\n'));

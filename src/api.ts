@@ -9,6 +9,7 @@ import {
 } from './config.ts';
 import { Chrome } from './ui.ts';
 import { Terminal, type TermEventName, type TermEvents, type TestHooks } from './terminal.ts';
+import type { TransferProtocol, TransferStatus } from './transfers.ts';
 import { VERSION_STRING } from './replies.ts';
 
 export interface MountOptions extends Partial<Options> {
@@ -31,7 +32,7 @@ export interface EnigTermHandle {
     /** Change an option at run time (crt, aspect, scale, keyBar, autoReconnect, backspace, scrollback, endpoint, title, ...). */
     setOption<K extends keyof Options>(key: K, value: Options[K]): void;
     getOption<K extends keyof Options>(key: K): Options[K];
-    /** Subscribe to an event: state, title, bell, link, notice, recovered, scroll, selection, profile, sound. Returns an unsubscribe function. */
+    /** Subscribe to an event: state, title, bell, link, notice, recovered, scroll, selection, profile, sound, transfer. Returns an unsubscribe function. */
     on<K extends TermEventName>(event: K, fn: (ev: TermEvents[K]) => void): () => void;
     /** Send text to the host as if typed. */
     send(text: string): void;
@@ -48,6 +49,18 @@ export interface EnigTermHandle {
     enableSound(): void;
     /** Forget the sounds boards stored in this browser (all boards). */
     clearSoundCache(): Promise<{ files: number; bytes: number }>;
+    /**
+     * Receive files: "zmodem" waits for the board to start sending (ZModem
+     * downloads also start by themselves); "ymodem"/"xmodem" start now (start
+     * the board's side first). `name`: what an XModem file is saved as.
+     */
+    download(protocol?: TransferProtocol, name?: string): boolean;
+    /** Send files: "zmodem" waits for the board's receiver; "ymodem"/"xmodem" start now (XModem: one file). */
+    upload(files: File[] | FileList, protocol?: TransferProtocol): boolean;
+    /** Cancel the transfer (or refuse the board's offer, or forget a prepared one). */
+    cancelTransfer(): void;
+    /** The current or last transfer. */
+    readonly transfer: TransferStatus;
     readonly state: string;
     /** The terminal object itself (advanced use and tests; not a stable API). */
     readonly terminal: Terminal;
@@ -129,6 +142,12 @@ export async function mount(el: HTMLElement, options: MountOptions = {}): Promis
         },
         enableSound: () => term.sound.gesture(true),
         clearSoundCache: () => term.sound.clearCache(),
+        download: (protocol = 'zmodem', name) => term.transfers.download(protocol, name),
+        upload: (files, protocol = 'zmodem') => term.transfers.upload(Array.from(files), protocol),
+        cancelTransfer: () => term.transfers.cancel(),
+        get transfer() {
+            return term.transfers.status;
+        },
         get state() {
             return term.state;
         },

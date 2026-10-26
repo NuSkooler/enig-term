@@ -106,6 +106,12 @@ export interface Options {
     audioMaxFile: number;
     /** Decoded audio held at once (slots and channels), MB. */
     audioMemory: number;
+    /** File transfers (ZModem, YModem, XModem): the Files panel and ZModem detection. */
+    transfers: boolean;
+    /** A ZModem download the board starts: "auto" begins it, "ask" asks first, "off" leaves it on screen as text. */
+    zmodemDetect: 'auto' | 'ask' | 'off';
+    /** Largest file saved through a browser download, MB (larger ones are refused; a chosen folder has no limit). */
+    transferMaxFile: number;
 }
 
 export const DEFAULTS: Readonly<Options> = Object.freeze({
@@ -151,14 +157,17 @@ export const DEFAULTS: Readonly<Options> = Object.freeze({
     audioCache: 64,
     audioMaxFile: 16,
     audioMemory: 192,
+    transfers: true,
+    zmodemDetect: 'auto',
+    transferMaxFile: 512,
 }) as Options;
 
 /** Settings a user can change from the UI (and that are persisted). */
-export const USER_KEYS = ['aspect', 'crt', 'scale', 'keyBar', 'autoReconnect', 'backspace', 'sharp', 'profile', 'amigaPalette', 'amigaAspect', 'mute', 'volume', 'musicTone'] as const;
+export const USER_KEYS = ['aspect', 'crt', 'scale', 'keyBar', 'autoReconnect', 'backspace', 'sharp', 'profile', 'amigaPalette', 'amigaAspect', 'mute', 'volume', 'musicTone', 'zmodemDetect'] as const;
 export type UserKey = (typeof USER_KEYS)[number];
 export type UserSettings = Partial<Pick<Options, UserKey>>;
 
-const BOOL_KEYS = ['lockEndpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'scrollbackOnClear', 'autoReconnect', 'blink', 'allowInsecure', 'urlParams', 'persist', 'toolbar', 'amigaIce', 'amigaBlink', 'sound', 'mute'] as const;
+const BOOL_KEYS = ['lockEndpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'scrollbackOnClear', 'autoReconnect', 'blink', 'allowInsecure', 'urlParams', 'persist', 'toolbar', 'amigaIce', 'amigaBlink', 'sound', 'mute', 'transfers'] as const;
 
 /** Pixel aspect (height:width) of the Amiga presets: PAL hires 640x256 and NTSC 640x200 shown at 4:3. */
 export const AMIGA_ASPECT = { pal: 1.875, ntsc: 2.4 } as const;
@@ -233,6 +242,7 @@ export function sanitize(src: Record<string, unknown> | null | undefined, warn: 
         ['audioCache', 0, 4096],
         ['audioMaxFile', 1, 64],
         ['audioMemory', 16, 2048],
+        ['transferMaxFile', 1, 4096],
     ] as const) {
         if (!(k in src)) continue;
         const v = Number(src[k]);
@@ -254,6 +264,7 @@ export function sanitize(src: Record<string, unknown> | null | undefined, warn: 
     oneOf('backspace', ['bs', 'del']);
     oneOf('renderer', ['webgl2', '2d']);
     oneOf('musicTone', ['square', 'syncterm', 'sine']);
+    oneOf('zmodemDetect', ['auto', 'ask', 'off']);
     for (const k of ['linkSchemes', 'lock'] as const) {
         if (!(k in src)) continue;
         const v = src[k];
@@ -270,7 +281,7 @@ export function fromUrlParams(q: URLSearchParams): { opts: Record<string, unknow
     const map: Record<string, string> = { connect: 'autoConnect', keys: 'keyBar' };
     for (const [k, v] of q) {
         const key = map[k] ?? k;
-        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect', 'amigaPalette', 'amigaAspect', 'amigaRows', 'mute', 'volume', 'musicTone'].includes(key)) opts[key] = v;
+        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect', 'amigaPalette', 'amigaAspect', 'amigaRows', 'mute', 'volume', 'musicTone', 'zmodemDetect'].includes(key)) opts[key] = v;
     }
     const hooks: Record<string, string> = {};
     for (const k of ['naws', 'debugDa', 'debugPanic', 'audioLock', 'audioFallback']) {

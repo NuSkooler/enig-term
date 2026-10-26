@@ -9,6 +9,7 @@
 //   title, cols, rows, profile (auto|pc|amiga), scrollback
 //   fonts, amiga-fonts (font directories), amiga-palette, amiga-aspect, amiga-rows
 //   sound ("off": no audio at all), mute, volume (0-100), music-tone (square|syncterm|sine)
+//   transfers ("off": no file transfers), zmodem-detect (auto|ask|off), transfer-max-file (MB)
 //   crt, aspect   booleans: present / "on" / "true" = on, "off" / "false" = off
 //   scale         fit | integer;   keybar  auto | on | off
 //   toolbar       "off" hides the toolbar;  persist  "off" stops saving user settings
@@ -16,7 +17,7 @@
 //   fill          fit the screen to the element's height too
 // Events (CustomEvent, detail = the event object): state, title, bell, link
 // (cancelable: preventDefault() skips the built-in confirmation), notice,
-// recovered, scroll, selection, profile, sound.
+// recovered, scroll, selection, profile, sound, transfer.
 import { mount, type EnigTermHandle, type MountOptions } from './api.ts';
 import type { TermEventName } from './terminal.ts';
 
@@ -49,9 +50,12 @@ const ATTRS: Record<string, string> = {
     mute: 'mute',
     volume: 'volume',
     'music-tone': 'musicTone',
+    transfers: 'transfers',
+    'zmodem-detect': 'zmodemDetect',
+    'transfer-max-file': 'transferMaxFile',
 };
-const RUNTIME = new Set(['endpoint', 'title', 'crt', 'aspect', 'scale', 'keyBar', 'toolbar', 'autoReconnect', 'backspace', 'blink', 'scrollback', 'profile', 'amigaPalette', 'amigaAspect', 'amigaRows', 'mute', 'volume', 'musicTone']);
-const EVENTS: TermEventName[] = ['state', 'title', 'bell', 'link', 'notice', 'recovered', 'scroll', 'selection', 'profile', 'sound'];
+const RUNTIME = new Set(['endpoint', 'title', 'crt', 'aspect', 'scale', 'keyBar', 'toolbar', 'autoReconnect', 'backspace', 'blink', 'scrollback', 'profile', 'amigaPalette', 'amigaAspect', 'amigaRows', 'mute', 'volume', 'musicTone', 'transfers', 'zmodemDetect', 'transferMaxFile']);
+const EVENTS: TermEventName[] = ['state', 'title', 'bell', 'link', 'notice', 'recovered', 'scroll', 'selection', 'profile', 'sound', 'transfer'];
 
 export class EnigTermElement extends HTMLElement {
     static observedAttributes = Object.keys(ATTRS);

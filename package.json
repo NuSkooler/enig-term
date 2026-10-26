@@ -12,7 +12,7 @@
     "build": "npm run build:wasm && npm run build:js",
     "typecheck": "tsc --noEmit",
     "serve": "node scripts/serve.mjs",
-    "test:unit": "node --test test/core.test.mjs test/fonts.test.mjs test/shell.test.mjs test/fonts-tools.test.mjs test/audio-core.test.mjs test/audio.test.mjs test/xymodem.test.mjs test/zmodem.test.mjs",
+    "test:unit": "node --test test/core.test.mjs test/fonts.test.mjs test/shell.test.mjs test/fonts-tools.test.mjs test/audio-core.test.mjs test/audio.test.mjs test/xymodem.test.mjs test/zmodem.test.mjs test/transfer.test.mjs",
     "test:browser": "playwright test",
     "test": "npm run typecheck && npm run test:unit && npm run test:browser",
     "test:live": "playwright test --project=chromium test/live.spec.ts",
@@ -24,7 +24,8 @@
     "bench": "ENIG_TERM_BENCH=1 playwright test test/bench.spec.ts && node test/bench-core.mjs",
     "fixtures": "node test/fixtures/make-fixtures.mjs",
     "fonts": "node scripts/build-fonts.mjs",
-    "fonts:amiga": "node scripts/fetch-amiga-fonts.mjs --out test/amiga-fonts"
+    "fonts:amiga": "node scripts/fetch-amiga-fonts.mjs --out test/amiga-fonts",
+    "fuzz:xfer": "node test/fuzz-xfer.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.60.0",

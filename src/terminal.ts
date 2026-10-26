@@ -14,6 +14,7 @@ import { ScrollbackView } from './scrollback.ts';
 import { contains, normalize, selectionText, wordAt, type CellPos, type SelRange } from './selection.ts';
 import { TelnetClient } from './telnet.ts';
 import { boardKey, Sound, type SoundState } from './sound.ts';
+import { Transfers, type TransferStatus } from './transfers.ts';
 
 export type ConnState = 'idle' | 'connecting' | 'connected' | 'closed' | 'error';
 
@@ -33,6 +34,8 @@ export interface TermEvents {
     profile: { profile: 'pc' | 'amiga'; setting: string };
     /** Sound: off (disabled or unsupported), idle (not used yet), locked (the board plays sound; waiting for a click), on, muted. */
     sound: { state: SoundState };
+    /** A file transfer changed (see TransferStatus). */
+    transfer: TransferStatus;
 }
 export type TermEventName = keyof TermEvents;
 type Listener<K extends TermEventName> = (ev: TermEvents[K]) => void;
@@ -95,6 +98,8 @@ const FONT_WAIT_MS = 5000;
 const AUDIO_WAIT_MS = 300_000;
 /** Host bytes kept while holding; past this the hold ends early. */
 const HELD_MAX = 32 << 20;
+/** A transfer sends only while the WebSocket holds less than this. */
+const SEND_HIGH_WATER = 1 << 20;
 
 /** Directory URL (with a trailing slash) relative to the bundle. */
 function dirUrl(s: string): URL | null {
@@ -149,6 +154,10 @@ export class Terminal {
     /** Font refusals already told to the user this session. */
     private fontNotices = new Set<string>();
     readonly sound: Sound;
+    readonly transfers: Transfers;
+    /** A resize happened while a transfer owned the line: NAWS goes out after it. */
+    private nawsPending = false;
+    private keysNoticed = false;
     private fontScan = new FontSelectScan();
     /** The host's normal font (Ps1 0) is an Amiga one: the auto profile follows it. */
     private hostAmiga = false;
@@ -213,6 +222,11 @@ export class Terminal {
             { sound: opts.sound, mute: opts.mute, volume: opts.volume, musicTone: opts.musicTone, audioCache: opts.audioCache, audioMaxFile: opts.audioMaxFile, audioMemory: opts.audioMemory },
             {
                 reply: s => {
+                    // A reply in the middle of a transfer would land in the protocol.
+                    if (this.transfers?.busy) {
+                        this.logLine(`audio -> (dropped during a transfer) ${JSON.stringify(s.slice(0, 80))}`);
+                        return;
+                    }
                     this.logLine(`audio -> ${JSON.stringify(s.length > 200 ? s.slice(0, 200) + '...' : s)}`);
                     this.sendRaw(fromLatin1(s));
                 },
@@ -222,6 +236,19 @@ export class Terminal {
                 state: state => this.events.emit('sound', { state }),
             },
             { lock: hooks.audioLock, fallback: hooks.audioFallback },
+        );
+
+        this.transfers = new Transfers(
+            {
+                send: b => this.sendRaw(b),
+                screen: b => this.write(b),
+                canSend: () => (this.ws?.bufferedAmount ?? 0) < SEND_HIGH_WATER,
+                log: s => this.logLine(s),
+                notice: (level, text) => this.events.emit('notice', { level, text }),
+                status: st => this.onTransfer(st),
+                container: () => this.el,
+            },
+            { transfers: opts.transfers, zmodemDetect: opts.zmodemDetect, transferMaxFile: opts.transferMaxFile },
         );
 
         this.canvas = document.createElement('canvas');
@@ -323,6 +350,11 @@ export class Terminal {
             case 'volume':
             case 'musicTone':
                 this.sound.set({ [key]: value });
+                break;
+            case 'transfers':
+            case 'zmodemDetect':
+            case 'transferMaxFile':
+                this.transfers.set({ [key]: value });
                 break;
             default:
                 break;
@@ -808,7 +840,31 @@ export class Terminal {
     // --- data out --------------------------------------------------------------
 
     sendText(text: string): void {
+        if (this.keysHeld()) return;
         this.sendRaw(encode(text, this.charset));
+    }
+
+    /** While a transfer owns the line, what the user types is not sent (it would land in the protocol). */
+    private keysHeld(): boolean {
+        if (!this.transfers.busy) return false;
+        if (!this.keysNoticed) {
+            this.keysNoticed = true;
+            this.events.emit('notice', { level: 'info', text: 'Keys are not sent while a file transfer runs.' });
+        }
+        return true;
+    }
+
+    /** A transfer changed: tell the UI; once it no longer owns the line, send a deferred NAWS. */
+    private onTransfer(st: TransferStatus): void {
+        if (!this.transfers?.busy) {
+            this.keysNoticed = false;
+            if (this.nawsPending) {
+                this.nawsPending = false;
+                const naws = this.telnet?.buildResize();
+                if (naws && this.ws?.readyState === WebSocket.OPEN) this.ws.send(naws);
+            }
+        }
+        this.events.emit('transfer', st);
     }
 
     /** Bytes for the host. They are Telnet-escaped when connected. */
@@ -820,7 +876,7 @@ export class Terminal {
 
     /** Paste text: encoded like typing (CP437, or Latin-1 under an Amiga font) and sent in chunks. */
     paste(text: string): void {
-        if (!text) return;
+        if (!text || this.keysHeld()) return;
         this.scroll.toLive();
         const bytes = encode(text.replace(/\r\n?/g, '\n'), this.charset);
         this.pasteQueue.push(...chunk(bytes, PASTE_CHUNK));
@@ -828,8 +884,9 @@ export class Terminal {
     }
 
     private pumpPaste = (): void => {
-        const next = this.pasteQueue.shift();
+        const next = this.transfers.busy ? undefined : this.pasteQueue.shift();
         if (!next) {
+            this.pasteQueue.length = 0;
             this.pasteTimer = 0;
             return;
         }
@@ -1186,7 +1243,8 @@ export class Terminal {
             if (!(ev.data instanceof ArrayBuffer)) return;
             const { data, reply } = telnet.receive(new Uint8Array(ev.data));
             if (reply.length && ws.readyState === WebSocket.OPEN) ws.send(reply);
-            if (data.length) this.write(data);
+            // A file transfer may take the stream (and ZModem announces itself in it).
+            if (data.length) this.transfers.incoming(data);
         };
         let errored = false;
         ws.onerror = () => {
@@ -1196,6 +1254,7 @@ export class Terminal {
             if (ws !== this.ws) return;
             this.ws = null;
             this.telnet = null;
+            this.transfers.connectionClosed();
             this.sound.reset();
             // A session that lasted resets the backoff; a host that accepts and
             // drops at once keeps backing off.
@@ -1253,8 +1312,12 @@ export class Terminal {
 
     private applySize(cols: number, rows: number): void {
         this.core.resize(cols, rows);
-        const naws = this.telnet?.buildResize();
-        if (naws && this.ws?.readyState === WebSocket.OPEN) this.ws.send(naws);
+        // Not in the middle of a transfer: sexyz reads Telnet itself and takes a subnegotiation for data.
+        if (this.transfers.busy) this.nawsPending = true;
+        else {
+            const naws = this.telnet?.buildResize();
+            if (naws && this.ws?.readyState === WebSocket.OPEN) this.ws.send(naws);
+        }
         this.clearSelection();
         this.renderFrame(true);
     }
@@ -1278,6 +1341,7 @@ export class Terminal {
         this.disconnect();
         clearTimeout(this.pasteTimer);
         for (const r of this.ro) r.disconnect();
+        this.transfers.destroy();
         this.sound.destroy();
         this.core.destroy();
         this.el.replaceChildren();
