@@ -19,10 +19,10 @@
 
 mod capture;
 mod delegate;
+mod fonts;
 
 use capture::{CaptureScreen, view_screen_from};
-
-use std::collections::HashMap;
+use fonts::{DecScan, FontState, font_is_drawable, is_cterm_font_mode, mode_height};
 
 use icy_engine::{
     AttributedChar, BitFont, EditableScreen, FontSelectionState, IceMode, Position, Rectangle, RenderOptions, Screen, ScreenMode, ScreenSink, Size,
@@ -71,28 +71,41 @@ pub fn last_panic() -> String {
 /// (capture.rs), so the engine keeps none.
 const ENGINE_SCROLLBACK_CHUNKS: usize = 0;
 
-/// Highest SyncTERM font number with a built-in table entry in icy_engine.
-const LAST_BUILTIN_FONT: usize = 42;
+/// First CTerm font slot open to `DCS CTerm:Font` (reported as pF in `CSI = 1 n`).
+const FIRST_LOADABLE_SLOT: usize = 43;
 
-/// Wraps icy_engine's `ScreenSink` and intercepts what a terminal shell needs.
-struct CoreSink<'a> {
-    inner: ScreenSink<'a>,
+/// State the sink shares with `Core` across feeds.
+struct SinkState<'a> {
     events: &'a mut Vec<Value>,
-    fonts: &'a HashMap<usize, BitFont>,
+    fonts: &'a mut FontState,
     sync_output: &'a mut bool,
     passthrough_sync: bool,
     /// Set for changes that alter pixels without touching cells (palette, fonts, images).
     needs_full: &'a mut bool,
     inline_images: bool,
+    /// iCE colours as the host set them (`CSI ? 33 h/l`), and whether the
+    /// profile lets them apply.
+    host_ice: &'a mut bool,
+    ice_allowed: bool,
+    /// The profile's palette (ANSI order, 16 entries), restored by OSC 104.
+    default_palette: Option<&'a [(u8, u8, u8)]>,
 }
 
-/// First CTerm font slot open to `DCS CTerm:Font` (reported as pF in `CSI = 1 n`).
-const FIRST_LOADABLE_SLOT: usize = 43;
+/// Wraps icy_engine's `ScreenSink` and intercepts what a terminal shell needs.
+struct CoreSink<'a> {
+    inner: ScreenSink<'a>,
+    st: SinkState<'a>,
+}
 
-/// What icy_engine's renderer can draw: glyph rows are at most 8 bits wide and
-/// a glyph holds at most 32 rows.
-fn font_is_drawable(f: &BitFont) -> bool {
-    (1..=8).contains(&f.width) && (1..=32).contains(&f.height)
+/// Set ANSI palette entries 0..16 (ANSI order) on a screen.
+fn apply_palette(screen: &mut dyn EditableScreen, colors: &[(u8, u8, u8)], only: Option<&[u32]>) {
+    for (i, &(r, g, b)) in colors.iter().enumerate().take(16) {
+        if only.is_some_and(|o| !o.contains(&(i as u32))) {
+            continue;
+        }
+        screen.palette_mut().set_color_rgb(icy_engine::ansi_to_internal_palette_index(i as u32), r, g, b);
+    }
+    screen.mark_dirty();
 }
 
 impl CoreSink<'_> {
@@ -129,19 +142,45 @@ impl CoreSink<'_> {
         self.inner.screen_mut().as_any_mut().downcast_mut::<CaptureScreen>()
     }
 
-    /// Same bookkeeping icy_engine's private `set_font_selection_success` does.
-    fn font_selected(&mut self, nr: usize) {
-        let s = self.screen();
-        s.terminal_state_mut().font_selection_state = FontSelectionState::Success;
-        s.caret_mut().set_font_page(nr as u8);
-        let attr = s.caret().attribute;
-        let st = s.terminal_state_mut();
-        match (attr.is_bold(), attr.is_blinking()) {
-            (true, true) => st.high_intensity_blink_attribute_font_slot = nr,
-            (false, true) => st.blink_attribute_font_slot = nr,
-            (true, false) => st.high_intensity_attribute_font_slot = nr,
-            (false, false) => st.normal_attribute_font_slot = nr,
+    /// `CSI Ps1 ; Ps2 SP D`. Only fonts the shell or a DCS has loaded at the
+    /// current cell height are selectable; anything else is refused and the
+    /// screen keeps its fonts (CTerm: "no action is taken").
+    fn select_font(&mut self, ps1: u16, nr: u16) {
+        let reason = if ps1 > 3 {
+            Some("slot")
+        } else if nr > 255 {
+            Some("font")
+        } else if !self.st.fonts.has(nr as u8) {
+            Some("missing")
+        } else {
+            None
+        };
+        let ok = reason.is_none();
+        if ok {
+            let f = self.st.fonts.get(nr as u8).cloned().unwrap();
+            let nr8 = nr as u8;
+            self.st.fonts.slots[ps1 as usize] = nr8;
+            let slots = self.st.fonts.slots;
+            let s = self.screen();
+            s.set_font(nr as usize, f);
+            if ps1 == 0 {
+                s.caret_mut().set_font_page(nr8);
+            }
+            let t = s.terminal_state_mut();
+            t.font_selection_state = FontSelectionState::Success;
+            t.normal_attribute_font_slot = slots[0] as usize;
+            t.high_intensity_attribute_font_slot = slots[1] as usize;
+            t.blink_attribute_font_slot = slots[2] as usize;
+            t.high_intensity_blink_attribute_font_slot = slots[3] as usize;
+            *self.st.needs_full = true; // the slot's glyphs may have changed under existing cells
+        } else {
+            self.screen().terminal_state_mut().font_selection_state = FontSelectionState::Failure;
         }
+        let mut ev = json!({"t": "font", "slot": ps1, "font": nr, "ok": ok, "height": self.st.fonts.mode_h});
+        if let Some(r) = reason {
+            ev["reason"] = json!(r);
+        }
+        self.st.events.push(ev);
     }
 
     fn request_event(&mut self, req: &TerminalRequest) -> Option<Value> {
@@ -166,13 +205,12 @@ impl CoreSink<'_> {
                     FontSelectionState::Success => 0,
                     FontSelectionState::Failure => 1,
                 };
-                json!({"t": "req", "k": "fontstate", "result": r, "slots": [
-                    st.normal_attribute_font_slot, st.high_intensity_attribute_font_slot,
-                    st.blink_attribute_font_slot, st.high_intensity_blink_attribute_font_slot]})
+                json!({"t": "req", "k": "fontstate", "first": FIRST_LOADABLE_SLOT, "result": r, "slots": self.st.fonts.slots})
             }
             TerminalRequest::FontModeReport => {
+                // Modes set with CSI ? Pn h that CTerm reports, ascending.
                 let st = s.terminal_state();
-                let mut modes: Vec<u32> = Vec::new();
+                let mut modes: Vec<u16> = Vec::new();
                 if st.origin_mode == icy_engine::OriginMode::WithinMargins {
                     modes.push(6);
                 }
@@ -182,56 +220,90 @@ impl CoreSink<'_> {
                 if s.caret().visible {
                     modes.push(25);
                 }
-                if s.ice_mode() == IceMode::Ice {
+                let fm = self.st.fonts.mode_report();
+                modes.extend(fm.iter().take(2).filter(|m| m.1).map(|m| m.0));
+                if *self.st.host_ice {
                     modes.push(33);
                 }
-                if s.caret().blinking {
-                    modes.push(35);
-                }
+                modes.extend(fm.iter().skip(2).filter(|m| m.1).map(|m| m.0));
                 json!({"t": "req", "k": "fontmode", "modes": modes})
             }
             TerminalRequest::FontDimensionReport => {
-                let d = s.font_dimensions();
-                json!({"t": "req", "k": "fontdim", "h": d.height, "w": d.width})
+                let (w, h) = cell_px_of(s);
+                json!({"t": "req", "k": "fontdim", "h": h, "w": w})
             }
             other => json!({"t": "req", "k": "other", "dbg": format!("{other:?}")}),
         })
     }
 }
 
+/// Cell size in pixels: slot 0's font (icy_engine renders every cell at that
+/// size), 9 wide when SAUCE letter spacing is on.
+fn cell_px_of(s: &dyn Screen) -> (u32, u32) {
+    let f = s.font(0).map(|f| (f.width as u32, f.height as u32)).unwrap_or((8, 16));
+    let w = if s.use_letter_spacing() && f.0 == 8 { 9 } else { f.0 };
+    (w, f.1)
+}
+
 impl CommandSink for CoreSink<'_> {
     fn print(&mut self, text: &[u8]) {
+        // CTerm alternate fonts (CSI ? 31 h, ? 34 h) and intensity/blink
+        // disables (? 32 h, ? 35 h) apply to what is written now.
+        let fs = &*self.st.fonts;
+        let attr = self.inner.screen().caret().attribute;
+        let (bold, blink) = (attr.is_bold(), attr.is_blinking());
+        let idx = fs.slot_index(bold, blink);
+        let strip_bold = fs.bright_disable && bold;
+        let strip_blink = fs.blink_disable && blink;
+        if idx == 0 && !strip_bold && !strip_blink {
+            self.inner.print(text);
+            return;
+        }
+        let mut a = attr;
+        if idx != 0 {
+            a.set_font_page(fs.slots[idx]);
+        }
+        if strip_bold {
+            a.set_is_bold(false);
+        }
+        if strip_blink {
+            a.set_is_blinking(false);
+        }
+        self.screen().caret_mut().attribute = a;
         self.inner.print(text);
+        self.screen().caret_mut().attribute = attr;
     }
 
     fn emit(&mut self, cmd: TerminalCommand) {
         let cmd = self.clamp_counts(cmd);
         match cmd {
-            TerminalCommand::CsiFontSelection { slot, font_number } => {
-                let nr = font_number as usize;
-                if let Some(font) = self.fonts.get(&nr) {
-                    // Runtime-loaded font wins over the embedded table.
-                    let f = font.clone();
-                    self.screen().set_font(nr, f);
-                    self.font_selected(nr);
-                } else if nr > LAST_BUILTIN_FONT && self.inner.screen().font(nr).is_some() {
-                    // DCS-loaded slot: icy_engine selects it but then reports
-                    // Failure because the built-in lookup returns None.
-                    self.font_selected(nr);
-                } else {
-                    self.inner.emit(cmd);
-                }
-                *self.needs_full = true; // the slot's glyphs may have changed under existing cells
-                let ok = self.inner.screen().terminal_state().font_selection_state == FontSelectionState::Success;
-                self.events.push(json!({"t": "font", "slot": slot, "font": nr, "ok": ok}));
-            }
-            TerminalCommand::CsiDecSetMode(DecMode::SynchronizedOutput, enabled) if !self.passthrough_sync => {
+            TerminalCommand::CsiFontSelection { slot, font_number } => self.select_font(slot, font_number),
+            TerminalCommand::CsiDecSetMode(DecMode::SynchronizedOutput, enabled) if !self.st.passthrough_sync => {
                 // icy_engine stamps std::time::Instant::now() here, which panics
                 // on wasm32-unknown-unknown. Track the mode ourselves.
-                *self.sync_output = enabled;
+                *self.st.sync_output = enabled;
+            }
+            TerminalCommand::CsiDecSetMode(DecMode::IceColors, enabled) => {
+                *self.st.host_ice = enabled;
+                let on = enabled && self.st.ice_allowed;
+                self.inner.emit(TerminalCommand::CsiDecSetMode(DecMode::IceColors, on));
+            }
+            // CTerm's mode 35 is "blink disabled" (tracked by DecScan, applied
+            // in print), not icy_engine's cursor-blink mode.
+            TerminalCommand::CsiDecSetMode(DecMode::CursorBlinking, _) => {}
+            TerminalCommand::EscReset => {
+                self.inner.emit(cmd);
+                self.st.fonts.reset_modes();
+                *self.st.host_ice = false;
+                let slot0 = self.st.fonts.get(0).cloned().unwrap_or_else(|| fonts::placeholder(self.st.fonts.mode_h));
+                self.screen().set_font(0, slot0);
+                if let Some(p) = self.st.default_palette {
+                    apply_palette(self.inner.screen_mut(), p, None);
+                }
+                *self.st.needs_full = true;
             }
             TerminalCommand::Bell => {
-                self.events.push(json!({"t": "bell"}));
+                self.st.events.push(json!({"t": "bell"}));
             }
             _ => {
                 self.inner.emit(cmd);
@@ -258,18 +330,35 @@ impl CommandSink for CoreSink<'_> {
             // Only CTerm's loadable slots, and only fonts the renderer can draw:
             // icy_engine takes any slot (0 replaces the font that sets the cell
             // size) and any size (a 0-high or 33+-high font panics the renderer).
-            let ok = (FIRST_LOADABLE_SLOT..=255).contains(slot) && BitFont::from_bytes(String::new(), data).is_ok_and(|f| font_is_drawable(&f));
-            self.events.push(json!({"t": "fontload", "slot": slot, "bytes": data.len(), "ok": ok}));
-            if !ok {
-                return;
+            // The font is kept at its own height, so it can be selected while
+            // the screen mode has that cell height (as in SyncTERM).
+            let font = (FIRST_LOADABLE_SLOT..=255)
+                .contains(slot)
+                .then(|| BitFont::from_bytes(format!("DCS {slot}"), data).ok())
+                .flatten()
+                .filter(font_is_drawable);
+            let mut ev = json!({"t": "fontload", "slot": slot, "bytes": data.len(), "ok": font.is_some()});
+            if let Some(f) = font {
+                let (slot8, h) = (*slot as u8, f.height);
+                ev["height"] = json!(h);
+                ev["width"] = json!(f.width);
+                // Reloading a slot in use changes what its cells show at once.
+                if h == self.st.fonts.mode_h && self.inner.screen().font(*slot).is_some() {
+                    self.screen().set_font(*slot, f.clone());
+                    *self.st.needs_full = true;
+                }
+                self.st.fonts.fonts.insert((slot8, h), f);
             }
+            self.st.events.push(ev);
+            return;
         }
-        *self.needs_full = true;
+        *self.st.needs_full = true;
         self.inner.device_control(dcs);
     }
 
     fn operating_system_command(&mut self, osc: OperatingSystemCommand) {
         let mut link: Option<u32> = None;
+        let mut reset_palette: Option<Vec<u32>> = None;
         match &osc {
             OperatingSystemCommand::Hyperlink { params, uri } => {
                 // Mirror icy_engine's rule: both parts must be UTF-8; an empty URI closes.
@@ -277,19 +366,27 @@ impl CommandSink for CoreSink<'_> {
                     if u.is_empty() {
                         link = Some(0);
                     } else {
-                        self.events.push(json!({"t": "link", "uri": u}));
+                        self.st.events.push(json!({"t": "link", "uri": u}));
                         link = Some(u32::MAX); // intern below, once the screen is reachable
                     }
                 }
             }
             OperatingSystemCommand::SetTitle(t) | OperatingSystemCommand::SetWindowTitle(t) => {
-                self.events.push(json!({"t": "title", "text": String::from_utf8_lossy(t)}));
+                self.st.events.push(json!({"t": "title", "text": String::from_utf8_lossy(t)}));
             }
-            OperatingSystemCommand::SetPaletteColor(..) | OperatingSystemCommand::ResetPaletteColors(_) => *self.needs_full = true,
+            OperatingSystemCommand::SetPaletteColor(..) => *self.st.needs_full = true,
+            OperatingSystemCommand::ResetPaletteColors(idx) => {
+                *self.st.needs_full = true;
+                reset_palette = Some(idx.iter().map(|&i| i as u32).collect());
+            }
             _ => {}
         }
         let uri = if let OperatingSystemCommand::Hyperlink { uri, .. } = &osc { Some(String::from_utf8_lossy(uri).into_owned()) } else { None };
         self.inner.operating_system_command(osc);
+        if let (Some(idx), Some(p)) = (reset_palette, self.st.default_palette) {
+            // OSC 104 resets to the profile's palette, not icy_engine's VGA one.
+            apply_palette(self.inner.screen_mut(), p, if idx.is_empty() { None } else { Some(&idx) });
+        }
         if let Some(id) = link {
             if let Some(cap) = self.capture() {
                 cap.active_link = if id == 0 { 0 } else { cap.links.intern(uri.as_deref().unwrap_or("")) };
@@ -299,24 +396,24 @@ impl CommandSink for CoreSink<'_> {
 
     fn aps(&mut self, data: &[u8]) {
         // CTerm audio and other APC strings: the shell owns audio.
-        self.events.push(json!({"t": "apc", "data": String::from_utf8_lossy(&data[..data.len().min(4096)])}));
+        self.st.events.push(json!({"t": "apc", "data": String::from_utf8_lossy(&data[..data.len().min(4096)])}));
         // Inline images (SyncTERM DrawJXLBlob/DrawPPMBlob) are decoded in full
         // before icy_engine's size check, so a small file declaring a huge
         // image exhausts WASM memory. Off unless the shell enables them.
-        if self.inline_images {
-            *self.needs_full = true;
+        if self.st.inline_images {
+            *self.st.needs_full = true;
             self.inner.aps(data);
         }
     }
 
     fn play_music(&mut self, music: AnsiMusic) {
-        self.events.push(json!({"t": "music", "actions": music.music_actions.len()}));
+        self.st.events.push(json!({"t": "music", "actions": music.music_actions.len()}));
         self.inner.play_music(music);
     }
 
     fn request(&mut self, request: TerminalRequest) {
         if let Some(ev) = self.request_event(&request) {
-            self.events.push(ev);
+            self.st.events.push(ev);
         }
         self.inner.request(request);
     }
@@ -328,7 +425,7 @@ impl CommandSink for CoreSink<'_> {
         if let ParseError::MalformedSequence { sequence: Some(seq), .. } = &error {
             if let Some(rest) = seq.strip_prefix("CSI = ") {
                 if let Some(n) = rest.strip_suffix(" n").and_then(|v| v.trim().parse::<u32>().ok()) {
-                    self.events.push(json!({"t": "req", "k": "ctsmrr", "n": n}));
+                    self.st.events.push(json!({"t": "req", "k": "ctsmrr", "n": n}));
                     return;
                 }
             }
@@ -377,7 +474,14 @@ pub struct Core {
     parser: Box<dyn CommandParser + Send>,
     emulation: TerminalEmulation,
     events: Vec<Value>,
-    fonts: HashMap<usize, BitFont>,
+    fonts: FontState,
+    dec_scan: DecScan,
+    host_ice: bool,
+    ice_allowed: bool,
+    /// The profile's 16 ANSI colours (None: icy_engine's VGA palette).
+    default_palette: Option<Vec<(u8, u8, u8)>>,
+    /// icy_engine's own 16 colours, to go back to when a profile palette is cleared.
+    engine_palette: Vec<(u8, u8, u8)>,
     sync_output: bool,
     passthrough_sync: bool,
 
@@ -410,13 +514,22 @@ impl Core {
     pub fn new(cols: u32, rows: u32, emulation: &str) -> Core {
         install_panic_hook();
         let emulation = emulation_from(emulation);
-        let (screen, parser) = create(cols, rows, emulation);
+        let (mut screen, parser) = create(cols, rows, emulation);
+        let fonts = FontState::new(rows);
+        screen.set_font(0, fonts::placeholder(fonts.mode_h));
+        screen.set_font_dimensions(Size::new(8, fonts.mode_h as i32));
+        let engine_palette = (0..16u32).map(|i| screen.palette().rgb(icy_engine::ansi_to_internal_palette_index(i))).collect();
         Core {
             screen,
             parser,
             emulation,
             events: Vec::new(),
-            fonts: HashMap::new(),
+            fonts,
+            dec_scan: DecScan::default(),
+            host_ice: false,
+            ice_allowed: true,
+            default_palette: None,
+            engine_palette,
             sync_output: false,
             passthrough_sync: false,
             frame: Vec::new(),
@@ -440,16 +553,29 @@ impl Core {
     /// Feed host bytes (after Telnet de-framing). Returns the number of queued events.
     pub fn feed(&mut self, bytes: &[u8]) -> u32 {
         let pushed = self.screen.pushed;
-        let mut sink = CoreSink {
-            inner: ScreenSink::new(&mut *self.screen),
-            events: &mut self.events,
-            fonts: &self.fonts,
-            sync_output: &mut self.sync_output,
-            passthrough_sync: self.passthrough_sync,
-            needs_full: &mut self.force_full,
-            inline_images: self.inline_images,
-        };
-        self.parser.parse(bytes, &mut sink);
+        // Split at CTerm mode sequences icy_engine does not parse (CSI ? 31/32/34/35 h|l),
+        // so each applies exactly where it occurs in the stream.
+        let mut from = 0;
+        for i in 0..bytes.len() {
+            if let Some((params, set)) = self.dec_scan.step(bytes[i]) {
+                if params.iter().any(|&p| is_cterm_font_mode(p)) {
+                    self.parse(&bytes[from..=i]);
+                    from = i + 1;
+                    for p in params {
+                        match p {
+                            31 => self.fonts.alt_bright = set,
+                            32 => self.fonts.bright_disable = set,
+                            34 => self.fonts.alt_blink = set,
+                            35 => self.fonts.blink_disable = set,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        if from < bytes.len() {
+            self.parse(&bytes[from..]);
+        }
         let added = (self.screen.pushed - pushed) as usize;
         if self.view_offset > 0 && added > 0 {
             // Keep a scrolled-back view on the same lines while output scrolls.
@@ -466,6 +592,10 @@ impl Core {
     }
 
     pub fn resize(&mut self, cols: u32, rows: u32) {
+        let h = mode_height(rows);
+        if h != self.fonts.mode_h {
+            self.switch_mode_height(h);
+        }
         let size = Size::new(cols as i32, rows as i32);
         self.screen.set_size(size);
         self.screen.terminal_state_mut().set_size(size);
@@ -484,6 +614,16 @@ impl Core {
     pub fn reset(&mut self) {
         let (c, r) = (self.cols(), self.rows());
         let (mut screen, parser) = create(c, r, self.emulation);
+        // Loaded fonts stay (the next selection uses them); selections go.
+        self.fonts.reset_modes();
+        let slot0 = self.fonts.get(0).cloned().unwrap_or_else(|| fonts::placeholder(self.fonts.mode_h));
+        screen.set_font_dimensions(slot0.size());
+        screen.set_font(0, slot0);
+        if let Some(p) = &self.default_palette {
+            apply_palette(&mut *screen, p, None);
+        }
+        self.host_ice = false;
+        self.dec_scan = DecScan::default();
         screen.scrollback = std::mem::take(&mut self.screen.scrollback);
         screen.scrollback_limit = self.screen.scrollback_limit;
         screen.capture_on_clear = self.screen.capture_on_clear;
@@ -737,14 +877,18 @@ impl Core {
     pub fn cell_height(&self) -> u32 {
         self.cell_px().1
     }
+    /// Name of the font in `slot` at the current cell height ("" if none).
     pub fn font_name(&self, slot: u32) -> String {
-        self.screen.font(slot as usize).map(|f| f.name().to_string()).unwrap_or_default()
+        if slot > 255 {
+            return String::new();
+        }
+        self.fonts.get(slot as u8).map(|f| f.name().to_string()).unwrap_or_default()
     }
     pub fn font_size_of(&self, slot: u32) -> Vec<u32> {
-        self.screen
-            .font(slot as usize)
-            .map(|f| vec![f.width as u32, f.height as u32])
-            .unwrap_or_default()
+        if slot > 255 {
+            return Vec::new();
+        }
+        self.fonts.get(slot as u8).map(|f| vec![f.width as u32, f.height as u32]).unwrap_or_default()
     }
     /// icy_engine's legacy aspect stretch (Y factor), 1.0 unless SAUCE asked for it.
     pub fn engine_aspect_stretch(&self) -> f32 {
@@ -761,25 +905,96 @@ impl Core {
         self.screen.terminal_state().last_column_flag_mode
     }
 
-    /// Load a bitmap font (PSF1/PSF2 or raw 8xN, as icy_engine's `BitFont::from_bytes`
-    /// accepts) into `slot`. It takes priority over the embedded table for
-    /// `CSI Ps1 ; slot SP D`. If `slot` is the active page it applies at once.
+    /// Load a bitmap font (PSF1/PSF2, YAFF or raw 8xN, as icy_engine's
+    /// `BitFont::from_bytes` accepts) for SyncTERM font number `slot`, at its
+    /// own cell height. It becomes selectable with `CSI Ps1 ; slot SP D` while
+    /// the screen mode has that height (and slot 0 sets the cell size). If
+    /// the slot is already on screen it applies at once. Returns "WxH".
     pub fn load_font(&mut self, slot: u32, name: &str, data: &[u8]) -> Result<String, JsError> {
+        if slot > 255 {
+            return Err(JsError::new("font slot must be 0-255"));
+        }
         let font = BitFont::from_bytes(name.to_string(), data).map_err(|e| JsError::new(&format!("{e}")))?;
         if !font_is_drawable(&font) {
             return Err(JsError::new(&format!("font size {}x{} is not drawable (max 8x32)", font.width, font.height)));
         }
         let info = format!("{}x{}", font.width, font.height);
-        self.fonts.insert(slot as usize, font.clone());
-        if slot == 0 || self.screen.font(slot as usize).is_some() {
+        let h = font.height;
+        self.fonts.fonts.insert((slot as u8, h), font.clone());
+        let in_use = slot == 0 || self.screen.font(slot as usize).is_some() || self.fonts.slots.contains(&(slot as u8));
+        if h == self.fonts.mode_h && in_use {
             if slot == 0 {
                 self.screen.set_font_dimensions(font.size());
             }
             self.screen.set_font(slot as usize, font);
+            self.screen.mark_dirty();
+            self.force_full = true;
         }
-        self.screen.mark_dirty();
-        self.force_full = true;
         Ok(info)
+    }
+
+    /// Whether SyncTERM font `slot` can be selected now (a font of the current
+    /// cell height is loaded for it).
+    pub fn has_font(&self, slot: u32) -> bool {
+        slot <= 255 && self.fonts.has(slot as u8)
+    }
+
+    /// Cell height the current screen mode uses (16, 14 or 8): the font height
+    /// `load_font` needs for a slot to be selectable.
+    pub fn mode_font_height(&self) -> u32 {
+        self.fonts.mode_h as u32
+    }
+
+    /// Font numbers in the four CTerm attribute slots (normal, bright, blink, both).
+    pub fn font_slots(&self) -> Vec<u32> {
+        self.fonts.slots.iter().map(|&s| s as u32).collect()
+    }
+
+    /// Slots on screen now (in the engine's font table), for reloading after a
+    /// cell height change.
+    pub fn fonts_in_use(&self) -> Vec<u32> {
+        (0..=255u32).filter(|&n| self.screen.font(n as usize).is_some()).collect()
+    }
+
+    /// Whether the host's `CSI ? 33 h` (iCE colours) takes effect. The Amiga
+    /// profile turns it off; the host's setting is kept and applies again when
+    /// allowed. Like iCE itself, it affects text written afterwards.
+    pub fn set_ice_allowed(&mut self, on: bool) {
+        self.ice_allowed = on;
+        self.screen.terminal_state_mut().ice_colors = self.host_ice && on;
+    }
+
+    /// Set the 16 ANSI colours (48 bytes, RGB, ANSI order: SGR 30-37 then
+    /// bright) as the default palette. OSC 4 still changes entries and OSC 104
+    /// resets them to this palette.
+    pub fn set_palette(&mut self, rgb: &[u8]) -> Result<(), JsError> {
+        if rgb.len() != 48 {
+            return Err(JsError::new("palette must be 16 RGB triplets (48 bytes)"));
+        }
+        let p: Vec<(u8, u8, u8)> = rgb.chunks(3).map(|c| (c[0], c[1], c[2])).collect();
+        apply_palette(&mut *self.screen, &p, None);
+        self.default_palette = Some(p);
+        self.force_full = true;
+        Ok(())
+    }
+
+    /// Back to icy_engine's VGA palette (and OSC 104 resets to it).
+    pub fn clear_palette(&mut self) {
+        let p = std::mem::take(&mut self.engine_palette);
+        apply_palette(&mut *self.screen, &p, None);
+        self.engine_palette = p;
+        self.default_palette = None;
+        self.force_full = true;
+    }
+
+    /// The 16 ANSI colours now (48 bytes, ANSI order), host changes included.
+    pub fn palette_rgb(&self) -> Vec<u8> {
+        (0..16u32)
+            .flat_map(|i| {
+                let (r, g, b) = self.screen.palette().rgb(icy_engine::ansi_to_internal_palette_index(i));
+                [r, g, b]
+            })
+            .collect()
     }
 
     /// Display a SAUCE-tagged ANSI file the way a terminal would, honouring its
@@ -929,8 +1144,54 @@ impl Core {
     }
 
     fn cell_px(&self) -> (u32, u32) {
-        let f = self.screen.font(0).map(|f| (f.width as u32, f.height as u32)).unwrap_or((8, 16));
-        let w = if self.screen.use_letter_spacing() && f.0 == 8 { 9 } else { f.0 };
-        (w, f.1)
+        cell_px_of(&*self.screen)
+    }
+
+    fn parse(&mut self, bytes: &[u8]) {
+        let mut sink = CoreSink {
+            inner: ScreenSink::new(&mut *self.screen),
+            st: SinkState {
+                events: &mut self.events,
+                fonts: &mut self.fonts,
+                sync_output: &mut self.sync_output,
+                passthrough_sync: self.passthrough_sync,
+                needs_full: &mut self.force_full,
+                inline_images: self.inline_images,
+                host_ice: &mut self.host_ice,
+                ice_allowed: self.ice_allowed,
+                default_palette: self.default_palette.as_deref(),
+            },
+        };
+        self.parser.parse(bytes, &mut sink);
+    }
+
+    /// The screen mode's cell height changed (a resize to or from 28, 43 or
+    /// 50 rows): put every slot on screen at the new height. Slots whose font
+    /// is not loaded at that height leave the table (their cells draw with
+    /// slot 0) and are reported, so the shell can load them.
+    fn switch_mode_height(&mut self, h: u8) {
+        self.fonts.mode_h = h;
+        let mut missing = Vec::new();
+        for n in self.fonts_in_use() {
+            match self.fonts.get(n as u8).cloned() {
+                Some(f) => self.screen.set_font(n as usize, f),
+                None if n == 0 => {
+                    self.screen.set_font(0, fonts::placeholder(h));
+                    missing.push(0);
+                }
+                None => {
+                    self.screen.remove_font(n as usize);
+                    missing.push(n);
+                }
+            }
+        }
+        for &s in &self.fonts.slots {
+            if !self.fonts.has(s) && !missing.contains(&(s as u32)) {
+                missing.push(s as u32);
+            }
+        }
+        self.screen.set_font_dimensions(Size::new(8, h as i32));
+        self.events.push(json!({"t": "fontheight", "height": h, "missing": missing}));
+        self.force_full = true;
     }
 }

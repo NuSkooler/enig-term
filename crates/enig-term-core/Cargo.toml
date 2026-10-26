@@ -29,6 +29,13 @@ default = []
 # the WASM, so it is off by default. SAUCE art works without it (load_sauce_art).
 viewer = []
 
+# The pinned icy_tools revision above, with patches/icy_tools/*.patch applied,
+# prepared by scripts/prepare-icy.sh (build-wasm.sh runs it). The patches
+# strip icy_engine's embedded fonts: enig-term loads its own at runtime.
+[patch."https://github.com/mkrueger/icy_tools"]
+icy_engine = { path = "../../build/icy_tools/crates/icy_engine" }
+icy_parser_core = { path = "../../build/icy_tools/crates/icy_parser_core" }
+
 [profile.release]
 opt-level = "z"
 lto = true

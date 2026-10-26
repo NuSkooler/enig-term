@@ -757,7 +757,6 @@ dependencies = [
 [[package]]
 name = "icy_engine"
 version = "0.5.0"
-source = "git+https://github.com/mkrueger/icy_tools?rev=1456074edac862d79d87ccd8cd4f0e87a57a9d39#1456074edac862d79d87ccd8cd4f0e87a57a9d39"
 dependencies = [
  "base64",
  "bitflags",
@@ -800,7 +799,6 @@ dependencies = [
 [[package]]
 name = "icy_parser_core"
 version = "0.1.0"
-source = "git+https://github.com/mkrueger/icy_tools?rev=1456074edac862d79d87ccd8cd4f0e87a57a9d39#1456074edac862d79d87ccd8cd4f0e87a57a9d39"
 dependencies = [
  "base64",
  "bitflags",

@@ -14,6 +14,7 @@ FEATURES="${CORE_FEATURES:-}"
 WASM_BINDGEN="${WASM_BINDGEN:-wasm-bindgen}"
 WASM_OPT="${WASM_OPT:-wasm-opt}"
 
+"$ROOT/scripts/prepare-icy.sh"
 cd "$CRATE"
 cargo "+$TOOLCHAIN" build --release --target wasm32-unknown-unknown ${FEATURES:+--features "$FEATURES"}
 RAW="${CARGO_TARGET_DIR:-$CRATE/target}/wasm32-unknown-unknown/release/enig_term_core.wasm"
