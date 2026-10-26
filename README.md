@@ -7,12 +7,13 @@ input, scrollback, selection, links, UI) and a WebGL2 output pass with sharp
 scaling, 4:3 aspect correction and an optional CRT effect (2D-canvas
 fallback).
 
-Status: **Phase 1 (MVP)**, version 0.1.0, not released. See `CHANGELOG.md`,
-and `SPIKE.md` for the Phase 0 measurements behind the design.
+Status: **Phase 2 (fonts and Amiga)**, version 0.1.0, not released. See
+`CHANGELOG.md`, and `SPIKE.md` for the Phase 0 measurements behind the design.
 
 - [Build](#build) · [Test](#test) · [dist/ layout](#dist-layout) ·
   [Standalone page](#standalone-page) · [config.json v1](#configjson-v1) ·
   [Embedding](#embedding) · [Settings](#settings) · [Keyboard](#keyboard) ·
+  [Fonts](#fonts) · [Amiga profile](#amiga-profile) ·
   [Behaviour notes](#behaviour-notes) · [Licences](#licences)
 
 ## Build
@@ -37,10 +38,34 @@ WASM), `ENIG_TERM_SOURCEMAP=1` (writes `enig-term.js.map`; off by default so
 it is not part of `dist/`).
 
 icy_tools is pinned at `1456074e` in `crates/enig-term-core/Cargo.toml`, and
-`crates/enig-term-core/Cargo.lock` is the real pin (several of icy_tools' own
-git dependencies have no revision). After a deliberate rebase, regenerate the
-screen wrapper with `python3 scripts/gen-delegate.py <icy_tools checkout>`
-and the golden frames with `npm run goldens` (after checking the screenshots).
+`crates/enig-term-core/Cargo.lock` is the real pin for everything else
+(several of icy_tools' own git dependencies have no revision).
+
+**The engine is built from a patched icy_tools.** `scripts/prepare-icy.sh`
+(run by `build:wasm`) fetches exactly the pinned revision into
+`build/icy_tools/` (shallow, about 125 MB on disk; `ICY_TOOLS_GIT=` points it
+at a local clone for offline builds) and applies `patches/icy_tools/*.patch`.
+Cargo.toml's `[patch."https://github.com/mkrueger/icy_tools"]` section builds
+icy_engine and icy_parser_core from there. The one patch,
+`0001-no-embedded-fonts.patch` (7 files, about 40 lines), removes every font
+compiled into icy_engine: it shadows `include_bytes!`/`include_str!` for the
+crate with macros that yield empty data, makes `BitFont::from_bytes` refuse
+empty data, and turns the unwraps on built-in fonts into a blank placeholder.
+The shell loads the fonts it ships instead (see [Fonts](#fonts)).
+
+### Rebasing icy_tools
+
+1. Change both `rev = "..."` values in `crates/enig-term-core/Cargo.toml`.
+2. `scripts/prepare-icy.sh`. If the patch no longer applies, fix it in
+   `build/icy_tools/` (the intent is in the patch's comments: no font data
+   compiled in, no panic on a missing built-in font) and save it again with
+   `git -C build/icy_tools diff > patches/icy_tools/0001-no-embedded-fonts.patch`.
+   Check for new `include_bytes!` users that are not fonts (none at `1456074e`;
+   the shadowing macros would empty them too).
+3. `cargo update -p icy_engine -p icy_parser_core` in the crate, then review
+   the `Cargo.lock` diff.
+4. Regenerate the screen wrapper with `python3 scripts/gen-delegate.py build/icy_tools`.
+5. `npm run build`, `npm test`; after checking the screenshots, `npm run goldens`.
 
 ## Test
 
@@ -51,7 +76,16 @@ npm run test:browser # Playwright: chromium, webkit, firefox, Pixel 7, iPhone 14
 npm run fuzz -- 60   # feed fuzzer for N seconds (optional seed as 2nd argument)
 ENIG_TERM_LIVE_WS=ws://127.0.0.1:18810 npm run test:live            # a throwaway ENiGMA
 ENIG_TERM_LIVE_PAGE=http://127.0.0.1:18080/_enig/ws-term/ npm run test:live   # through ENiGMA's route
+npm run fonts:amiga  # optional: install the Amiga fonts into test/amiga-fonts/ (gitignored)
+npm run fonts -- <oldschool_pc_font_pack_v2.2_FULL.zip>   # regenerate fonts/ (rarely)
 ```
+
+Tests that need the Amiga fonts (a Topaz test card, the explicit Amiga
+profile's font, the fetch script's offline round trip) skip when
+`test/amiga-fonts/` is missing; the development server serves it as
+`/fonts/amiga/`. Everything else uses the shipped PC fonts, and where a test
+is about slot numbers rather than designs it puts our ISO-8859-1 font into
+slot 42 as a stand-in.
 
 **WebKit on hosts without its system libraries.** Playwright's WebKit build
 needs libraries that a desktop may lack (Ubuntu 24.04: `libevent-2.1-7t64`,
@@ -96,7 +130,11 @@ route serves it as is, so this layout is a contract:
 | `index.html` | The standalone page. Fetches `./config.json` (relative); without one it asks for a host. |
 | `enig-term.js` | The whole shell as one ES module, including the wasm-bindgen glue. Importing it defines `<enig-term>`; it also exports `mount`, `EnigTerm`, `version`. |
 | `enig_term_core_bg.wasm` | The engine. Loaded from next to `enig-term.js` (resolved from `import.meta.url`), as `enig_term_core_bg.wasm?v=<16 hex digits of its SHA-256>`, so a bundle never pairs with a different WASM even though file names carry no hash. |
-| `LICENSE`, `NOTICE` | BSD-2-Clause, and the third-party notices (icy_tools). |
+| `fonts/` | `manifest.json` (SyncTERM slot -> file, code page, source, licence), `pc/*.psf` (48 PSF2 fonts, about 157 KB), and their `LICENSE` (CC BY-SA 4.0) and `README.txt`. Fetched lazily from next to `enig-term.js`: the manifest as `manifest.json?v=<16 hex digits of its SHA-256>` (stamped into the bundle), each font as `<file>?v=<16 hex digits of its own SHA-256>`, so all of it can be cached for good. |
+| `fonts/amiga/` | **Not shipped.** Created by the operator with `tools/fetch-amiga-fonts.mjs` (see [Amiga fonts](#amiga-fonts)). Its manifest is fetched with revalidation. The build fails if it appears in `dist/`. |
+| `tools/fetch-amiga-fonts.mjs` | The operator's Amiga font installer (Node 18+, no dependencies, no root). |
+| `credits.html` | Credits and licences (enig-term, icy_tools, the PC font table, the Amiga font source, palette sources). Linked from the Settings panel. |
+| `LICENSE`, `NOTICE` | BSD-2-Clause, and the third-party notices (icy_tools, fonts). |
 | `config.example.json` | A commented-by-example `config.json` v1. |
 
 There is no CSS file (styles live in the shadow root) and **no
@@ -113,7 +151,8 @@ parameters (standalone page only) override `config.json`:
 | `endpoint=wss://…` | `endpoint` (ignored when the config sets `lockEndpoint`) |
 | `connect=1` | `autoConnect` |
 | `aspect=0/1`, `crt=0/1`, `sharp=0/1`, `blink=0/1` | the booleans of the same name |
-| `scale=fit\|integer`, `keys=auto\|on\|off`, `profile=pc\|amiga` | `scale`, `keyBar`, `profile` |
+| `scale=fit\|integer`, `keys=auto\|on\|off`, `profile=auto\|pc\|amiga` | `scale`, `keyBar`, `profile` |
+| `amigaPalette=ncomm\|term-ega`, `amigaAspect=pal\|ntsc\|<1-3>`, `amigaRows=` | the same |
 | `cols=`, `rows=`, `scrollback=`, `renderer=webgl2\|2d`, `autoReconnect=0/1` | the same |
 
 Test hooks, never on by default: `naws=0` (refuse NAWS, so a host falls back
@@ -135,7 +174,16 @@ invalid values are dropped with a console warning. ENiGMA generates
 | `lockEndpoint` | boolean | `false` | The user cannot change the endpoint (host input read-only; the `endpoint` URL parameter is ignored). |
 | `autoConnect` | boolean | `false` | Connect on load when there is an endpoint. |
 | `cols`, `rows` | integer | `80`, `25` | Terminal size (20-255, 10-255). Sent by NAWS. |
-| `profile` | `"pc"` or `"amiga"` | `"pc"` | Reserved for the Phase 2 Amiga profile; Phase 1 renders `pc`. Typed text already follows the active font (Latin-1 under Amiga fonts). |
+| `profile` | `"auto"`, `"pc"` or `"amiga"` | `"auto"` | Look profile ([Amiga profile](#amiga-profile)). `auto`: PC, switching to Amiga while the host's normal font is an Amiga font (SyncTERM 37-42) and back on a PC font. `pc` or `amiga` locks it (a Phase 1 config with `"pc"` keeps the PC look). Typed text always follows the active font (Latin-1 under Amiga fonts). |
+| `fonts` | string | `"fonts/"` | Directory of the PC fonts and their `manifest.json`, relative to `enig-term.js`. |
+| `amigaFonts` | string, or `false` | `"fonts/amiga/"` | Directory of the operator-installed Amiga fonts, relative to `enig-term.js`. `""` or `false`: none (Amiga fonts are refused without a request). |
+| `amigaPalette` | `"ncomm"` or `"term-ega"` | `"ncomm"` | Amiga profile palette. |
+| `amigaAspect` | `"pal"`, `"ntsc"` or a number 1-3 | `"pal"` | Amiga profile pixel aspect, height:width of an Amiga hires pixel: PAL 1.875, NTSC 2.4. Applies when `aspect` is on. |
+| `amigaRows` | integer 10-255, or `null` | `null` | Rows while the Amiga profile is active (e.g. 24, 25 or 32; NAWS tells the host). `null` keeps `rows`. |
+| `amigaFont` | integer 37-42 | `42` | Font the explicit `"amiga"` profile selects when Amiga fonts are installed (42 Topaz). |
+| `amigaIce` | boolean | `false` | Amiga profile honours the host's `CSI ? 33 h` (iCE colours). |
+| `amigaBlink` | boolean | `true` | Amiga profile blinks SGR 5 text. |
+| `amigaCursor` | `"block"` or `"host"` | `"block"` | Amiga profile cursor: always a block, or the shape the host sets. |
 | `aspect` | boolean | `true` | 4:3 aspect correction. |
 | `crt` | boolean | `false` | CRT effect (curvature, scanlines). |
 | `scale` | `"fit"` or `"integer"` | `"fit"` | Fit the space, or only whole multiples (falls back to fit when even 1x does not fit). |
@@ -181,11 +229,13 @@ Attributes: `config` (URL of a `config.json`, relative to the page),
 `endpoint`, `lock-endpoint`, `auto-connect`, `title`, `cols`, `rows`,
 `profile`, `scrollback`, `crt`, `aspect`, `scale`, `keybar`, `toolbar`,
 `persist`, `url-params`, `renderer`, `blink`, `auto-reconnect`,
-`backspace`, and `fill` (fit the element's height too; give it a height).
+`backspace`, `fonts`, `amiga-fonts`, `amiga-palette`, `amiga-aspect`,
+`amiga-rows`, and `fill` (fit the element's height too; give it a height).
 Booleans: present, `on`, `true` or `1` is on; `off`, `false` or `0` is off.
 `endpoint`, `title`, `crt`, `aspect`, `scale`, `keybar`, `toolbar`,
-`auto-reconnect`, `backspace`, `blink` and `scrollback` also apply when
-changed later. The element has `ready` (a promise of the handle), `handle`,
+`auto-reconnect`, `backspace`, `blink`, `scrollback`, `profile`,
+`amiga-palette`, `amiga-aspect` and `amiga-rows` also apply when changed
+later. The element has `ready` (a promise of the handle), `handle`,
 `connect()` and `disconnect()`.
 
 ```js
@@ -218,6 +268,7 @@ event object as `detail`):
 | `recovered` | `{ message, recovered }`: the engine trapped and was replaced |
 | `scroll` | `{ offset, lines }`: the scrollback view moved (0 = live) |
 | `selection` | `{ text }` |
+| `profile` | `{ profile, setting }`: the look in effect changed (`pc` or `amiga`; `setting` is the configured `auto`/`pc`/`amiga`) |
 
 Isolation: everything lives in an open shadow root. The page's CSS does not
 reach in (inherited properties are reset at the root), and nothing is added
@@ -230,8 +281,10 @@ the bundle can be served from any path. Several terminals can share a page
 The Settings panel holds the user-settable keys, saved per origin in
 `localStorage` (`enig-term:settings:v1`; every access is guarded, and the
 terminal works without storage): `crt`, `aspect`, `scale`, `keyBar`,
-`autoReconnect`, `backspace` (and `sharp` through the API). Keys in the
-config's `lock` are shown disabled. The toolbar also has the host input,
+`autoReconnect`, `backspace`, `profile` ("Look": Auto, PC, Amiga),
+`amigaPalette`, `amigaAspect` (and `sharp` through the API). Keys in the
+config's `lock` are shown disabled. The panel links to the credits page.
+The toolbar also has the host input,
 Connect/Disconnect/Reconnect, Copy, Paste and Full screen (an iPhone, which
 has no element fullscreen, gets a viewport-covering mode instead).
 
@@ -265,6 +318,140 @@ Home/End/PgUp/PgDn/Ins/Del and an Fn row (F1-F12). It sits on the bottom edge
 of the visual viewport, so it stays above the soft keyboard (iOS does not
 shrink the layout viewport). Tap the screen to raise the keyboard.
 
+## Fonts
+
+No font is compiled into the WASM. The PC fonts are 256-glyph PSF2 files in
+`fonts/pc/`, one per code page and cell height, built by
+`scripts/build-fonts.mjs` from VileR's **Ultimate Oldschool PC Font Pack**
+v2.2 (int10h.org, CC BY-SA 4.0; SHA-256 of the pack checked): the IBM VGA
+design, sampled from the pack's Px437 and PxPlus pixel-outline TrueType fonts.
+16-pixel cells use IBM VGA 8x16, 14-pixel cells IBM VGA 8x14, 8-pixel cells
+the first 8 columns of IBM VGA 9x8. The CP437 files match the pack's own
+Windows bitmap (FON) fonts bit for bit. Other code pages are arranged from
+the same designs with Python's codec tables (`scripts/fonts/codepages.json`);
+C0 positions show the CP437 graphics, as DOS code page fonts do.
+
+The shell fetches the manifest and the slot 0 font (CP437) at start, with the
+WASM: a CP437 session loads `fonts/manifest.json` (22,218 B, 4,156 B gzipped)
+and `cp437-8x16.psf` (4,128 B, 1,400 B gzipped). Any other font is fetched
+when the host selects it: the stream is held at the final byte of
+`CSI Ps1 ; Ps2 SP D` until the font is in (at most 5 s), so the selection
+succeeds and the text after it uses the font.
+
+**SyncTERM font slots** (`CSI Ps1 ; Ps2 SP D`, numbered as in the CTerm
+manual):
+
+| Slot | Font | Drawn with |
+|---|---|---|
+| 0, 26 | CP437 (26: "thin") | IBM VGA, CP437 |
+| 1, 20 | CP1251 Cyrillic (1: "swiss") | IBM VGA, CP1251 |
+| 2, 12, 22 | KOI8-R ((b), (c)) | IBM VGA, KOI8-R |
+| 3 | ISO-8859-2 | IBM VGA |
+| 4, 11, 13, 23 | ISO-8859-4 Baltic (wide, VGA 9bit mapped) | IBM VGA, ISO-8859-4 |
+| 5, 25, 27 | CP866 ((c), (b)) | IBM VGA, CP866 |
+| 6 | ISO-8859-9 | IBM VGA |
+| 8 | ISO-8859-8 Hebrew | IBM VGA (LRM/RLM blank) |
+| 9 | KOI8-U | IBM VGA |
+| 10, 16 | ISO-8859-15 (10: "thin") | IBM VGA |
+| 14 | ISO-8859-5 | IBM VGA |
+| 17, 18 | CP850 (17: "thin") | IBM VGA |
+| 19, 28 | CP865 (19: "thin"; the manual says "885") | IBM VGA |
+| 21 | ISO-8859-7 Greek | IBM VGA (0xA5 drachma and 0xAA ypogegrammeni are blank: not in the pack) |
+| 24, 30 | ISO-8859-1 (30: "thin") | IBM VGA |
+| 29 | cp866u Ukrainian | IBM VGA, CP1125 |
+| 7, 15 | haik8, ARMSCII-8 | **refused**: no Armenian glyphs in the licensed set |
+| 31 | CP1131 Belarusian | **refused**: no code page table to build it from |
+| 32-35 | Commodore 64/128 | **refused**: no licensed font |
+| 36 | Atari | **refused**: no licensed font |
+| 37-42 | P0T NOoDLE, mO'sOul, MicroKnight Plus, Topaz Plus, MicroKnight, Topaz | operator-installed Amiga fonts, else **refused** |
+| 43-255 | `DCS CTerm:Font` | loaded by the host |
+
+Style variants (thin, swiss, (b), (c), wide) are drawn in the one IBM VGA
+design; `credits.html` lists them. A refused selection changes nothing on
+screen and reports `pR = 1` in `CSI = 1 n`; a selection never draws blank.
+
+- **Cell size follows the screen mode, as in SyncTERM**: 25 (and most) rows
+  use 16-pixel cells, 28 and 43 rows 14, 50 rows 8; each slot loads the font
+  of that height. A resize that changes the cell height reloads the fonts on
+  screen at the new height (the core reports which ones it needs). A font of
+  another height (from a DCS) is refused while the mode's height differs.
+  (icy_engine draws every cell at slot 0's size, so cells cannot follow
+  their own font's size: an upstream limit.)
+- **Ps1**: the font goes into attribute slot 0 (normal), 1 (bold), 2 (blink)
+  or 3 (bold and blink). Bold text uses slot 1 under `CSI ? 31 h`, blinking
+  text slot 2 under `CSI ? 34 h`, both slot 3; `CSI ? 32 h` stops bold from
+  brightening and `CSI ? 35 h` stops blinking text from blinking (CTerm's
+  meaning of 35, not icy_engine's cursor blink). Like everything in
+  icy_engine, these apply to text written afterwards (fonts are per cell).
+  Ps1 above 3 is refused.
+- **DCS `CTerm:Font:<slot>:<base64>`**: slots 43-255 (`pF = 43` in
+  `CSI = 1 n`), any drawable size (8 wide, 1-32 high), kept at its own
+  height. Reloading a slot in use updates its cells at once.
+- **SAUCE**: letter spacing (9-dot) and iCE apply; the SAUCE font name is not
+  mapped to our fonts yet (the file renders with slot 0, CP437 at the mode's
+  height). The 9th column is the engine's: blank, or a copy of column 8 for
+  0xC0-0xDF (the VGA's 9-dot alternate glyphs are not reproduced).
+
+### Amiga fonts
+
+enig-term does not ship Amiga fonts. The operator installs them, in the
+directory that holds `enig-term.js`:
+
+```sh
+node tools/fetch-amiga-fonts.mjs                # writes fonts/amiga/
+node tools/fetch-amiga-fonts.mjs --kickstart 1  # Topaz and Topaz Plus from Kickstart 1.x
+node tools/fetch-amiga-fonts.mjs --out DIR      # elsewhere (then set config.json "amigaFonts")
+```
+
+It downloads TrueSchool's **Multi Platform Amiga Fonts** v1.02 (dMG/t!s^dS!)
+from <https://github.com/rewtnull/amigafonts>, pinned to commit `d4298753`,
+checks every file against a SHA-256 in the script (on any mismatch it writes
+nothing and exits 1), converts the 8x16 raw fonts (line-doubled 8x8 "Amiga
+aspect" bitmaps, ISO-8859-1 order) to PSF2 at 16 rows, plus an 8-row variant
+from the even rows, and writes them with a `manifest.json` and the source's
+README (`README-amigafonts.txt`). Slots: 37 P0T-NOoDLE, 38 mO'sOul, 39
+MicroKnight Plus, 40 Topaz Plus, 41 MicroKnight, 42 Topaz (Kickstart 2.x+
+versions by default).
+
+**Licence status:** the source README releases these files "under the GPL-FE
+license" (GPL with the font exception) and also says "Topaz is (c) AmigaInc."
+(the files are remakes); P0T-NOoDLE, MicroKnight and mO'sOul are credited to
+their original authors. That is why enig-term only points to them: whether
+to serve them is the operator's decision. Note that in these bitmaps
+Topaz/Topaz Plus (Kickstart 2) and P0T-NOoDLE hold the Amiga's inverted
+underscore at 0xA0 (non-breaking space), as the README explains.
+
+## Amiga profile
+
+The Ami/X look: the Amiga palette, Amiga pixel aspect, a block cursor, iCE
+off, optionally an Amiga screen height, and typed text in Latin-1 (that
+follows the font in every profile).
+
+- **When**: `profile: "auto"` (default) switches to it while the host's normal
+  font (Ps1 0) is an Amiga font (37-42) and back on any other font; a font
+  that is refused changes nothing. `"amiga"` or `"pc"` (config, attribute,
+  URL, API `setOption('profile', ...)` or the Settings panel) locks it; the
+  explicit `"amiga"` also selects `amigaFont` (Topaz) when Amiga fonts are
+  installed, and undoes that when the profile ends. The user's setting ranks
+  as described in [Precedence](#precedence), unless the config locks `profile`.
+- **Palette**: `src/palettes.ts` holds the tables. `ncomm` (default) is NComm
+  3.0/3.09's ANSI pens: `000 C00 0B0 BA0 00C B0B 0DD DDD | 666 F00 0F0 FF0 00F
+  F0F 0FF FFF` (12-bit, ANSI order, each component x17); `term-ega` is Term
+  4.8's table. It is the default palette while the profile is active: host
+  OSC 4 changes still apply, and OSC 104 resets to it.
+- **Aspect**: the Amiga fonts are 8x8 glyphs line-doubled into 16-row cells,
+  so a frame row is half an Amiga pixel and the frame is stretched by
+  `amigaAspect` x 8 / cell height: PAL (1.875, 640x256 at 4:3) by default, NTSC
+  2.4 (640x200 at 4:3, the same shape as the PC's 4:3). `aspect: false` shows
+  square pixels.
+- **Geometry**: `amigaRows` (off by default) resizes while the profile is
+  active and sends NAWS; the configured `rows` return with the PC profile.
+  NComm's "80x24" used a 640x204 screen; Term followed the display mode.
+- **Defaults**, all overridable: bold is bright, SGR 5 blinks
+  (`amigaBlink`), iCE colours off (`amigaIce`: no Amiga terminal is documented
+  with bright backgrounds; the host's `CSI ? 33 h` is remembered and reported,
+  and applies again in the PC profile), block cursor (`amigaCursor`).
+
 ## Behaviour notes
 
 - **Scrollback** is cells, not pixels: lines leaving the top of the screen
@@ -287,7 +474,12 @@ shrink the layout viewport). Tap the screen to raise the keyboard.
   ("enig-term", the package version); CTDA `CSI < 0;1;2;3;5 c` (DCS fonts,
   bright backgrounds, OSC palette, font selection, numbered as in the current
   CTerm manual); CPR; `CSI 5 n`; `CSI 255 n` as a CPR of the screen size;
-  `CSI = 1/2/3/4/5/6 n`. No answer to reports this build lacks (`CSI = 7 n`, audio).
+  `CSI = 1 n` as `CSI = 1 ; 43 ; pR ; pS0 ; pS1 ; pS2 ; pS3 n` (pR 0 the last
+  selection worked, 1 refused, 99 none yet); `CSI = 2 n` with the set modes
+  among 6, 7, 25, 31, 32, 33, 34, 35 (`CSI = 2 ; n` when none); `CSI = 3 n` as
+  `CSI = 3 ; <cell height> ; <cell width> n` (width 9 with SAUCE letter
+  spacing); `CSI = 4/5/6 n`. No answer to reports this build lacks
+  (`CSI = 7 n`, audio).
 - **Telnet**: BINARY, SGA and ECHO accepted, TTYPE `ansi-bbs`, NAWS at
   negotiation and on every resize, NEW-ENVIRON and anything else refused.
 - **Blink**: with iCE colours off, blinking text blinks at the VGA rate
@@ -317,7 +509,13 @@ shrink the layout viewport). Tap the screen to raise the keyboard.
 ## Licences
 
 enig-term is BSD-2-Clause (`LICENSE`). The WASM links icy_tools (MIT OR
-Apache-2.0, used under MIT); `src/crt.ts` ports its CRT shader functions.
-See `NOTICE`. The fonts embedded in the engine are icy_engine's (provenance
-to be settled before release; Phase 2 replaces them with int10h and
-operator-installed Amiga fonts).
+Apache-2.0, used under MIT), built without its embedded fonts;
+`src/crt.ts` ports its CRT shader functions. See `NOTICE`.
+
+The PC fonts in `fonts/` are derived from VileR's Ultimate Oldschool PC Font
+Pack and are **CC BY-SA 4.0** (`fonts/LICENSE`, `fonts/README.txt`). They are
+separate data files under their own licence, so share-alike applies to them
+only. Amiga fonts are not distributed; see [Amiga fonts](#amiga-fonts). The
+Amiga palettes are numbers taken from NComm and Term (cited in
+`src/palettes.ts`), no code. `credits.html` in `dist/` lists all of this for
+users.

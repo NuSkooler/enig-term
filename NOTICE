@@ -30,14 +30,26 @@ icy_tools (icy_engine, icy_parser_core)
   ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-  FONT DATA: the icy_engine build used by this spike still embeds icy_engine's
-  bitmap fonts (crates/icy_engine/data/fonts). Those files carry no provenance
-  or license information upstream. They are NOT redistributed by this
-  repository as separate assets, and a release build must strip them and load
-  fonts externally (see SPIKE.md).
+  The WASM is built from that revision with patches/icy_tools/*.patch
+  applied, which remove icy_engine's embedded bitmap fonts (they carry no
+  provenance or license information upstream). None of them is distributed.
 
 Transitive Rust dependencies of icy_engine are listed in
 crates/enig-term-core/Cargo.lock; each is under its own (permissive) license.
+
+PC fonts (fonts/: manifest.json, pc/*.psf)
+  Derived from "The Ultimate Oldschool PC Font Pack" v2.2 by VileR,
+  https://int10h.org/oldschool-pc-fonts/ , licensed under the Creative
+  Commons Attribution-ShareAlike 4.0 International License (fonts/LICENSE).
+  Converted to PSF2 bitmaps per code page by scripts/build-fonts.mjs (see
+  fonts/README.txt). The share-alike terms cover those files only.
+
+Amiga fonts are not distributed. tools/fetch-amiga-fonts.mjs downloads them
+for an operator from https://github.com/rewtnull/amigafonts (TrueSchool,
+GPL with the font exception per its README; Topaz (c) Amiga Inc.).
+
+Amiga palettes (src/palettes.ts): colour values only, from NComm 3.0/3.09
+and Term 4.8 (Olaf Barthel); no code from either.
 
 Telnet negotiation (src/telnet.ts) is ported from the Xibalba web terminal,
 the author's own code, relicensed here under BSD-2-Clause.
