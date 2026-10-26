@@ -61,6 +61,11 @@ browsers that cannot decode Ogg themselves; built from src/audio/ogg.ts):
   with this copyright notice). Their Ogg demuxer (codec-parser, LGPL) is not
   used; src/audio/ogg.ts reads Ogg pages itself.
 
+  @eshaz/web-worker 1.2.2 (its browser entry, a one-line re-export of the
+  global Worker), https://github.com/eshaz/web-worker
+  Copyright 2020 Google LLC. Licensed under the Apache License, Version 2.0,
+  https://www.apache.org/licenses/LICENSE-2.0
+
   libvorbis and libogg, https://xiph.org/  Copyright (c) 2002-2020 Xiph.Org
   Foundation. libopus, https://opus-codec.org/  Copyright 2001-2023 Xiph.Org,
   Skype Limited, Octasic, Jean-Marc Valin, Timothy B. Terriberry, CSIRO,
