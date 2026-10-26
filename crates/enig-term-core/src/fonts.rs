@@ -12,7 +12,7 @@
 //! 1 bright, 2 blink, 3 bright+blink). The bright/blink slots take effect
 //! under `CSI ? 31 h` / `CSI ? 34 h`; icy_engine ignores Ps1 and does not
 //! know modes 31, 32, 34 or CTerm's 35, so the wrapper tracks them (a small
-//! byte scanner in `feed`, see `DecScan`) and applies them as text is
+//! byte scanner in `feed`, see scan.rs) and applies them as text is
 //! printed. Like icy_engine, fonts are a property of each cell (written with
 //! the font current at the time), not of the whole screen.
 
@@ -95,57 +95,7 @@ impl FontState {
     }
 }
 
-/// Finds `CSI ? Pn ; ... h|l` sequences that set CTerm modes icy_engine does
-/// not parse (31, 32, 34, 35), across feed() chunks, so `feed` can split the
-/// bytes there and apply the mode at the right point in the stream.
-#[derive(Default)]
-pub struct DecScan {
-    state: u8,
-    params: Vec<u16>,
-    cur: u32,
-}
-
-impl DecScan {
-    /// Feed one byte; returns `Some((params, set))` when a complete
-    /// `CSI ? ... h|l` ends at this byte.
-    pub fn step(&mut self, b: u8) -> Option<(Vec<u16>, bool)> {
-        if b == 0x1b {
-            self.state = 1;
-            return None;
-        }
-        match self.state {
-            1 => self.state = if b == b'[' { 2 } else { 0 },
-            2 => {
-                if b == b'?' {
-                    self.state = 3;
-                    self.params.clear();
-                    self.cur = 0;
-                } else {
-                    self.state = 0;
-                }
-            }
-            3 => match b {
-                b'0'..=b'9' => self.cur = (self.cur * 10 + u32::from(b - b'0')).min(65535),
-                b';' => {
-                    if self.params.len() < 32 {
-                        self.params.push(self.cur as u16);
-                    }
-                    self.cur = 0;
-                }
-                b'h' | b'l' => {
-                    self.params.push(self.cur as u16);
-                    self.state = 0;
-                    return Some((std::mem::take(&mut self.params), b == b'h'));
-                }
-                _ => self.state = 0,
-            },
-            _ => {}
-        }
-        None
-    }
-}
-
-/// True for the modes `DecScan` results are applied for.
+/// True for the modes `scan::Found::DecMode` results are applied for.
 pub fn is_cterm_font_mode(p: u16) -> bool {
     matches!(p, 31 | 32 | 34 | 35)
 }

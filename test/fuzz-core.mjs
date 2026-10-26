@@ -14,7 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = ['cp437-testcard.ans', 'sauce-ice-9px.ans', 'amiga-topaz-latin1.ans'].map(f => fs.readFileSync(path.join(here, 'fixtures', f)));
 
 /** Small deterministic PRNG (mulberry32). */
-function rng(seed) {
+export function rng(seed) {
     let a = seed >>> 0;
     const next = () => {
         a = (a + 0x6d2b79f5) >>> 0;
@@ -55,6 +55,39 @@ function b64(r, n) {
     return Buffer.from(raw).toString('base64');
 }
 
+const MUSIC = 'aAbBcCdDeEfFgGlLmMnNoOpPsStT0123456789.-+#<> ';
+
+/** CTerm "ANSI" music: the three introducers, modes, good and bad strings. */
+export function music(r) {
+    const intro = r.pick([`${CSI}|`, `${CSI}N`, `${CSI}M`, `${CSI}${r.int(3)}|`, `${CSI}=${r.pick([0, 1, 2, 3, 99])}M`]);
+    let body = '';
+    const n = r.pick([0, 1, 5, 20, 200, 1500]);
+    for (let i = 0; i < n; i++) body += r.next() < 0.97 ? MUSIC[r.int(MUSIC.length)] : String.fromCharCode(r.int(256));
+    return intro + body + r.pick(['\x0e', '\x0e', '', ESC]);
+}
+
+/** CTerm audio APC strings, valid-looking and mutated. */
+export function audioApc(r) {
+    const k = r.int(12);
+    const n = () => String(r.pick(NUMS));
+    const body = [
+        () => `SyncTERM:A;Queue;C=${n()};S=${n()}${r.next() < 0.5 ? ';I=' + n() : ''}${r.next() < 0.3 ? ';X' : ''}${r.next() < 0.3 ? ';L' : ''}${r.next() < 0.3 ? ';V=' + n() : ''}`,
+        () => `SyncTERM:A;Synth;S=${n()};W=${r.pick(['SIN', 'SQ', 'SINE_HARM', 'X', ''])};F=${n()};T=${n()}${r.pick(['', 'ms', 'f', 'p', 'zz'])}`,
+        () => `SyncTERM:A;Load;S=${n()};${r.pick(['a', '../x', 'sfx/hit', str(r, 10)])}`,
+        () => `SyncTERM:A;LoadBlob;S=${n()};${b64(r, r.pick([0, 4, 100, 3000]))}`,
+        () => `SyncTERM:A;Flush;C=${n()}${r.next() < 0.5 ? ';O=' + n() : ''}`,
+        () => `SyncTERM:A;Volume;C=${n()};${r.pick(['V', 'VL', 'VR'])}=${r.pick([n(), '-6dB', 'x'])};T=${n()}`,
+        () => `SyncTERM:A;${r.pick(['Wait', 'Update', 'Copy'])};C=${n()};S=${n()};D=${n()}`,
+        () => `SyncTERM:C;S;${r.pick(['sfx/a', 'b', '', '/x'])};${b64(r, r.pick([0, 10, 5000, 70000]))}`,
+        () => `SyncTERM:C;L${r.pick(['', ';*', ';sfx/*', ';[', ';' + str(r, 8)])}`,
+        () => `SyncTERM:Q;${r.pick(['libsndfile', 'libsndfileFormat;32;96', 'libsndfileFormat;0x;', 'JXL', str(r, 10)])}`,
+        () => `SyncTERM:${r.pick(['A', 'C', 'Q'])};${str(r, r.int(80))}`,
+        () => `SyncTERM:A;Queue;${str(r, 30)}`,
+    ][k]();
+    if (r.next() < 0.2) return `${CSI}=7${r.next() < 0.5 ? ';' + n() : ''}${r.next() < 0.2 ? ';' + n() : ''}n`;
+    return `${ESC}_${body}${r.pick([ST, ST, ST, '', ESC + 'x'])}`;
+}
+
 function token(r) {
     const k = r.int(100);
     if (k < 30) return csi(r);
@@ -65,7 +98,8 @@ function token(r) {
     if (k < 63) return `${ESC}_${r.pick(['SyncTERM:C;DrawPPMBlob;', 'SyncTERM:A;', 'SyncTERM:C;S;', ''])}${str(r, r.int(40))}${r.pick([ST, ''])}`;
     if (k < 66) return `${CSI}${r.int(64)}*z`;
     if (k < 70) return `${CSI}${r.pick(['0', '1'])};${r.int(50)} D`;
-    if (k < 75) return `${ESC}[M${str(r, 20)}\x0e`; // ANSI music shape
+    if (k < 75) return music(r);
+    if (k < 80) return audioApc(r);
     if (k < 90) {
         const f = r.pick(FIXTURES);
         const a = r.int(f.length);
@@ -113,9 +147,16 @@ export async function fuzz({ seconds = 30, seed = Date.now() & 0xffffffff, cases
                 for (const p of parts) {
                     step = 'feed';
                     const tf = Date.now();
-                    core.feed(bytes(p));
+                    // The core stops after music and A;Wait: feed the rest, as the shell does.
+                    for (let b = bytes(p); ; ) {
+                        core.feed(b);
+                        core.take_events();
+                        while (core.take_apc?.() !== undefined);
+                        const fed = core.fed?.() ?? b.length;
+                        if (fed >= b.length) break;
+                        b = b.subarray(fed);
+                    }
                     if (traceCase === done) log(`trace case ${done}: ${Date.now() - tf} ms feed ${JSON.stringify(p).slice(0, 300)}`);
-                    core.take_events();
                     const k = r.int(100);
                     if (k < 25) {
                         step = 'render';

@@ -15,14 +15,24 @@
 //! * cursor, font and aspect getters;
 //! * runtime font loading that takes priority over the embedded font table;
 //! * cell scrollback and per-cell OSC 8 links (capture.rs), with a scrollback
-//!   view rendered through the engine.
+//!   view rendered through the engine;
+//! * CTerm audio: the APC strings the shell's audio engine needs, whole and
+//!   as raw bytes (`take_apc`), `CSI = 7 n` requests, and CTerm "ANSI" music
+//!   parsed here (scan.rs, music.rs). `feed` stops right after a music string
+//!   or an `A;Wait`, so the shell can hold the rest of the stream (CTerm
+//!   blocks there) and feed it again (`fed` says how far it got).
 
 mod capture;
 mod delegate;
 mod fonts;
+mod music;
+mod scan;
 
 use capture::{CaptureScreen, view_screen_from};
-use fonts::{DecScan, FontState, font_is_drawable, is_cterm_font_mode, mode_height};
+use fonts::{FontState, font_is_drawable, is_cterm_font_mode, mode_height};
+use music::MusicState;
+use scan::{Found, Pass, Scan};
+use std::collections::VecDeque;
 
 use icy_engine::{
     AttributedChar, BitFont, EditableScreen, FontSelectionState, IceMode, Position, Rectangle, RenderOptions, Screen, ScreenMode, ScreenSink, Size,
@@ -74,6 +84,25 @@ const ENGINE_SCROLLBACK_CHUNKS: usize = 0;
 /// First CTerm font slot open to `DCS CTerm:Font` (reported as pF in `CSI = 1 n`).
 const FIRST_LOADABLE_SLOT: usize = 43;
 
+/// Default cap on one audio APC string kept for the shell (the shell sets its
+/// own with `set_apc_limit`). icy_parser_core itself stops buffering a string
+/// at 32 MiB.
+const DEFAULT_APC_LIMIT: usize = 24 << 20;
+
+/// APC strings the shell's audio engine handles: whole, as raw bytes.
+fn is_audio_apc(d: &[u8]) -> bool {
+    d.starts_with(b"SyncTERM:A;")
+        || d.starts_with(b"SyncTERM:Q;")
+        || d.starts_with(b"SyncTERM:C;S;")
+        || d == b"SyncTERM:C;L"
+        || d.starts_with(b"SyncTERM:C;L;")
+}
+
+/// `SyncTERM:A;Wait` blocks the stream in CTerm.
+fn is_wait_apc(d: &[u8]) -> bool {
+    d.strip_prefix(b"SyncTERM:A;Wait").is_some_and(|r| r.is_empty() || r[0] == b';')
+}
+
 /// State the sink shares with `Core` across feeds.
 struct SinkState<'a> {
     events: &'a mut Vec<Value>,
@@ -89,6 +118,13 @@ struct SinkState<'a> {
     ice_allowed: bool,
     /// The profile's palette (ANSI order, 16 entries), restored by OSC 104.
     default_palette: Option<&'a [(u8, u8, u8)]>,
+    /// CTerm music state (reset by RIS).
+    music: &'a mut MusicState,
+    /// Audio APC strings for the shell, and the size limit for one.
+    apcs: &'a mut VecDeque<Vec<u8>>,
+    apc_limit: usize,
+    /// An APC asked to block the stream (`A;Wait`): `feed` stops after it.
+    stop: &'a mut bool,
 }
 
 /// Wraps icy_engine's `ScreenSink` and intercepts what a terminal shell needs.
@@ -232,6 +268,8 @@ impl CoreSink<'_> {
                 let (w, h) = cell_px_of(s);
                 json!({"t": "req", "k": "fontdim", "h": h, "w": w})
             }
+            // APC SyncTERM:Q;JXL (icy_parser_core turns it into a request).
+            TerminalRequest::JxlSupportReport => json!({"t": "req", "k": "jxl"}),
             other => json!({"t": "req", "k": "other", "dbg": format!("{other:?}")}),
         })
     }
@@ -295,6 +333,7 @@ impl CommandSink for CoreSink<'_> {
                 self.inner.emit(cmd);
                 self.st.fonts.reset_modes();
                 *self.st.host_ice = false;
+                *self.st.music = MusicState::default();
                 let slot0 = self.st.fonts.get(0).cloned().unwrap_or_else(|| fonts::placeholder(self.st.fonts.mode_h));
                 self.screen().set_font(0, slot0);
                 if let Some(p) = self.st.default_palette {
@@ -395,7 +434,21 @@ impl CommandSink for CoreSink<'_> {
     }
 
     fn aps(&mut self, data: &[u8]) {
-        // CTerm audio and other APC strings: the shell owns audio.
+        if is_audio_apc(data) {
+            // CTerm audio: the shell's engine takes the bytes (take_apc).
+            // Uploads are base64 files, so these can be megabytes.
+            if is_wait_apc(data) {
+                *self.st.stop = true;
+            }
+            if data.len() > self.st.apc_limit {
+                self.st.events.push(json!({"t": "apc", "n": data.len(), "over": true}));
+            } else {
+                self.st.apcs.push_back(data.to_vec());
+                self.st.events.push(json!({"t": "apc", "n": data.len()}));
+            }
+            return;
+        }
+        // Other APC strings: shown in the shell's log only.
         self.st.events.push(json!({"t": "apc", "data": String::from_utf8_lossy(&data[..data.len().min(4096)])}));
         // Inline images (SyncTERM DrawJXLBlob/DrawPPMBlob) are decoded in full
         // before icy_engine's size check, so a small file declaring a huge
@@ -406,9 +459,9 @@ impl CommandSink for CoreSink<'_> {
         }
     }
 
-    fn play_music(&mut self, music: AnsiMusic) {
-        self.st.events.push(json!({"t": "music", "actions": music.music_actions.len()}));
-        self.inner.play_music(music);
+    fn play_music(&mut self, _music: AnsiMusic) {
+        // Not reached: icy_parser_core's music option stays off; the scanner
+        // takes CTerm music strings out of the stream before the parser.
     }
 
     fn request(&mut self, request: TerminalRequest) {
@@ -425,7 +478,10 @@ impl CommandSink for CoreSink<'_> {
         if let ParseError::MalformedSequence { sequence: Some(seq), .. } = &error {
             if let Some(rest) = seq.strip_prefix("CSI = ") {
                 if let Some(n) = rest.strip_suffix(" n").and_then(|v| v.trim().parse::<u32>().ok()) {
-                    self.st.events.push(json!({"t": "req", "k": "ctsmrr", "n": n}));
+                    // 7 (audio) comes from the scanner, with all its parameters.
+                    if n != 7 {
+                        self.st.events.push(json!({"t": "req", "k": "ctsmrr", "n": n}));
+                    }
                     return;
                 }
             }
@@ -475,7 +531,14 @@ pub struct Core {
     emulation: TerminalEmulation,
     events: Vec<Value>,
     fonts: FontState,
-    dec_scan: DecScan,
+    scan: Scan,
+    music: MusicState,
+    /// Audio APC strings not yet taken by the shell, and the limit for one.
+    apcs: VecDeque<Vec<u8>>,
+    apc_limit: usize,
+    /// Bytes of the last `feed` that were processed.
+    fed: u32,
+    stop: bool,
     host_ice: bool,
     ice_allowed: bool,
     /// The profile's 16 ANSI colours (None: icy_engine's VGA palette).
@@ -525,7 +588,12 @@ impl Core {
             emulation,
             events: Vec::new(),
             fonts,
-            dec_scan: DecScan::default(),
+            scan: Scan::default(),
+            music: MusicState::default(),
+            apcs: VecDeque::new(),
+            apc_limit: DEFAULT_APC_LIMIT,
+            fed: 0,
+            stop: false,
             host_ice: false,
             ice_allowed: true,
             default_palette: None,
@@ -550,32 +618,93 @@ impl Core {
         }
     }
 
-    /// Feed host bytes (after Telnet de-framing). Returns the number of queued events.
+    /// Feed host bytes (after Telnet de-framing). Returns the number of queued
+    /// events. Processing stops early, right after a CTerm music string or an
+    /// `APC SyncTERM:A;Wait` (CTerm holds the stream there until the music has
+    /// played or the channel is idle): `fed()` is the number of bytes
+    /// processed, and the shell feeds the rest again when it is ready.
     pub fn feed(&mut self, bytes: &[u8]) -> u32 {
         let pushed = self.screen.pushed;
-        // Split at CTerm mode sequences icy_engine does not parse (CSI ? 31/32/34/35 h|l),
-        // so each applies exactly where it occurs in the stream.
+        let n = bytes.len();
         let mut from = 0;
-        for i in 0..bytes.len() {
-            if let Some((params, set)) = self.dec_scan.step(bytes[i]) {
-                if params.iter().any(|&p| is_cterm_font_mode(p)) {
-                    self.parse(&bytes[from..=i]);
+        let mut i = 0;
+        let mut end = n;
+        self.stop = false;
+        while i < n {
+            // Inside a string (an upload can be megabytes of base64): jump to
+            // the next byte that can end it.
+            if let Some(k) = self.scan.in_string() {
+                let rest = &bytes[i..];
+                let hit = if k == b']' { memchr::memchr2(0x1b, 0x07, rest) } else { memchr::memchr(0x1b, rest) };
+                match hit {
+                    Some(p) => i += p,
+                    None => break,
+                }
+            }
+            let (pass, found) = self.scan.step(bytes[i]);
+            match pass {
+                Pass::Byte => {}
+                Pass::Drop => {
+                    if from < i {
+                        self.parse(&bytes[from..i]);
+                    }
                     from = i + 1;
-                    for p in params {
-                        match p {
-                            31 => self.fonts.alt_bright = set,
-                            32 => self.fonts.bright_disable = set,
-                            34 => self.fonts.alt_blink = set,
-                            35 => self.fonts.blink_disable = set,
-                            _ => {}
+                }
+                Pass::Instead(x) => {
+                    if from < i {
+                        self.parse(&bytes[from..i]);
+                    }
+                    self.parse(&[x]);
+                    from = i + 1;
+                }
+            }
+            let mut halt = false;
+            match found {
+                None => {}
+                Some(Found::DecMode(params, set)) => {
+                    // Split at CTerm modes icy_engine does not parse (CSI ? 31/32/34/35 h|l),
+                    // so each applies exactly where it occurs in the stream.
+                    if params.iter().any(|&p| is_cterm_font_mode(p)) {
+                        self.parse(&bytes[from..=i]);
+                        from = i + 1;
+                        for p in params {
+                            match p {
+                                31 => self.fonts.alt_bright = set,
+                                32 => self.fonts.bright_disable = set,
+                                34 => self.fonts.alt_blink = set,
+                                35 => self.fonts.blink_disable = set,
+                                _ => {}
+                            }
                         }
                     }
                 }
+                Some(Found::AudioReport(params)) => {
+                    self.parse(&bytes[from..=i]);
+                    from = i + 1;
+                    self.events.push(json!({"t": "req", "k": "audio", "params": params}));
+                }
+                Some(Found::Music(buf, m_style)) => {
+                    let p = music::play(&mut self.music, &buf, m_style);
+                    let flat: Vec<i64> = p.notes.iter().flat_map(|n| [n.n as i64, n.on_ms as i64, n.off_ms as i64]).collect();
+                    self.events.push(json!({"t": "music", "fg": p.foreground, "n": flat}));
+                    halt = true;
+                }
+                Some(Found::ApcEnd) => {
+                    self.parse(&bytes[from..=i]);
+                    from = i + 1;
+                    halt = self.stop;
+                }
+            }
+            i += 1;
+            if halt {
+                end = i;
+                break;
             }
         }
-        if from < bytes.len() {
-            self.parse(&bytes[from..]);
+        if from < end {
+            self.parse(&bytes[from..end]);
         }
+        self.fed = end as u32;
         let added = (self.screen.pushed - pushed) as usize;
         if self.view_offset > 0 && added > 0 {
             // Keep a scrolled-back view on the same lines while output scrolls.
@@ -585,8 +714,33 @@ impl Core {
         self.events.len() as u32
     }
 
+    /// Bytes the last `feed` processed (less than it was given when it
+    /// stopped after music or `A;Wait`).
+    pub fn fed(&self) -> u32 {
+        self.fed
+    }
+
+    /// The oldest audio APC string not yet taken (each `{"t":"apc","n":..}`
+    /// event has one, in order), or undefined.
+    pub fn take_apc(&mut self) -> Option<Vec<u8>> {
+        self.apcs.pop_front()
+    }
+
+    /// Longest audio APC string kept for `take_apc` (longer ones are reported
+    /// with `"over": true` and dropped).
+    pub fn set_apc_limit(&mut self, bytes: u32) {
+        self.apc_limit = bytes as usize;
+    }
+
+    /// CTerm music introducers (`CSI = Ps M`): 0 `CSI |` only, 1 also `CSI N`
+    /// (default), 2 also `CSI M`.
+    pub fn music_mode(&self) -> u32 {
+        self.scan.music_mode as u32
+    }
+
     /// JSON array of events since the last call: host requests (`t:"req"`),
-    /// font switches, bell, OSC 8 links, titles, APC strings, ANSI music.
+    /// font switches, bell, OSC 8 links, titles, APC strings, CTerm music
+    /// (`{"t":"music","fg":bool,"n":[note, on ms, off ms, ...]}`).
     pub fn take_events(&mut self) -> String {
         Value::Array(std::mem::take(&mut self.events)).to_string()
     }
@@ -623,7 +777,9 @@ impl Core {
             apply_palette(&mut *screen, p, None);
         }
         self.host_ice = false;
-        self.dec_scan = DecScan::default();
+        self.scan.reset();
+        self.music = MusicState::default();
+        self.apcs.clear();
         screen.scrollback = std::mem::take(&mut self.screen.scrollback);
         screen.scrollback_limit = self.screen.scrollback_limit;
         screen.capture_on_clear = self.screen.capture_on_clear;
@@ -1160,6 +1316,10 @@ impl Core {
                 host_ice: &mut self.host_ice,
                 ice_allowed: self.ice_allowed,
                 default_palette: self.default_palette.as_deref(),
+                music: &mut self.music,
+                apcs: &mut self.apcs,
+                apc_limit: self.apc_limit,
+                stop: &mut self.stop,
             },
         };
         self.parser.parse(bytes, &mut sink);

@@ -524,6 +524,7 @@ dependencies = [
  "icy_engine",
  "icy_parser_core",
  "icy_sauce",
+ "memchr",
  "parking_lot",
  "serde_json",
  "wasm-bindgen",
