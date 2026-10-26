@@ -247,3 +247,43 @@ test('receiving: a screen after more than 64 KB of noise is still the one shown'
     assert.ok(rest.length <= 65536 + 64, `kept ${rest.length} bytes`);
     assert.ok(new TextDecoder().decode(rest).endsWith('\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: '), 'the whole screen, at the end');
 });
+
+test('receiving: the board leaves right after a file; the header answering its end is rubbed out too', { skip: !LRZSZ && 'lrzsz not installed' }, async () => {
+    const { spawn } = await import('node:child_process');
+    const dir = tmpdir();
+    fs.writeFileSync(path.join(dir, 'a.bin'), random(20_000));
+    let skew = 0;
+    const out = [];
+    let ended = false;
+    let result = null;
+    const sz = spawn('sz', ['--zmodem', '--binary', '--restricted', 'a.bin'], { cwd: dir, stdio: ['pipe', 'pipe', 'ignore'] });
+    let live = true;
+    const e = new ZmodemEngine('receive', [], b => (out.push(...b), live && sz.stdin.write(b)), {
+        ...quiet(),
+        // The board's program dies as the file ends: what answers the end reaches the prompt.
+        fileEnd: () => ((live = false), (ended = true), sz.kill('SIGKILL')),
+        done: r => (result = r),
+    }, { now: () => performance.now() + skew });
+    sz.stdout.on('data', d => live && e.feed(new Uint8Array(d)));
+    const tick = setInterval(() => e.tick(), 20);
+    try {
+        for (let i = 0; i < 500 && !ended; i++) await new Promise(r => setTimeout(r, 10));
+        assert.ok(ended, 'the file arrived');
+        await new Promise(r => setTimeout(r, 100));
+        const sent = out.length;
+        e.feed(enc('\x1b[2J\x1b[1;1H\x1b[0;1mMain\x1b[0m\x1b[5;5Hcmd: '));
+        skew += 3100;
+        for (let i = 0; i < 50 && !result; i++) await new Promise(r => setTimeout(r, 20));
+        assert.equal(result?.error, BOARD_LEFT);
+        // The ZRINIT answering ZEOF (21 bytes as a hex header) went out with
+        // the file's end, or just before it: all of it is rubbed out.
+        const abort = out.slice(sent);
+        const bs = abort.length - 8;
+        assert.deepEqual(abort, Array.from(boardLeftAbort(bs)));
+        assert.ok(bs >= 21, `${bs} backspaces`);
+    } finally {
+        clearInterval(tick);
+        sz.kill('SIGKILL');
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

@@ -195,13 +195,16 @@ export class ZmodemEngine implements TransferEngine {
             if (!this.blocked && !paced) this.guard(s => s.poll());
             const out = this.guard(s => s.take_output());
             if (out?.length) {
-                this.sent += out.length;
                 this.lastActivity = this.opts.now();
                 if (this.mode === 'receive') this.alive();
                 this.out(out);
             }
             if (this.opts.log) for (const l of this.guard(s => s.take_log()) ?? []) this.opts.log(`zmodem ${this.mode}: ${l}`);
-            if (!this.drainEvents()) return; // a sink write holds the session
+            const more = this.drainEvents();
+            // Counted after the events: what answers one (the ZRINIT after a
+            // file's end) may reach a prompt as typing all the same.
+            this.sent += out?.length ?? 0;
+            if (!more) return; // a sink write holds the session
             this.requestData();
             if (this.mode === 'send') {
                 const p = this.guard(s => s.progress_bytes()) ?? 0;
