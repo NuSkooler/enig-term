@@ -63,7 +63,7 @@ clone) at the revision in that crate's `Cargo.toml`
 (`[package.metadata.enig-term] icy-board-rev`, the one icy_tools pins for
 icy_net), with `patches/icy_board/*.patch` applied. The crate's own files are
 the wrapper (`src/lib.rs`) and the platform shims (`src/rt.rs`); see
-[File transfers](#file-transfers) for what the six patches change.
+[File transfers](#file-transfers) for what the seven patches change.
 
 ### Rebasing icy_tools
 
@@ -796,6 +796,7 @@ it, with an inactivity timeout and the board-left check). The patches in
 | 0004 | Upload data is awaited from the host a window at a time; the host may refuse (ZSKIP) an offered file. |
 | 0005 | The sender skips text before a header (status text on the board's pty) instead of failing after three bytes of it. |
 | 0006 | An overlong data subpacket (text spliced into it) is asked for again (ZRPOS) instead of failing the transfer. |
+| 0007 | ZFILE also carries the file's modification time and what is left of the batch (without it sexyz dated uploads in the year 2446). |
 
 The ZModem start detector is `src/transfer/detect.ts`, the stream handover and
 saving `src/transfers.ts` and `src/transfer/save.ts`. `npm run fuzz:xfer`

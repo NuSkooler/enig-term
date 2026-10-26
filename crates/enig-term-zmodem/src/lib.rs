@@ -292,9 +292,11 @@ impl ZSession {
     }
 
     /// Queue a file to send (before start()). Its data is asked for with need_*().
-    pub fn add_file(&mut self, name: String, size: f64) {
+    /// `mtime_ms`: its modification time, ms since the epoch (0: unknown).
+    pub fn add_file(&mut self, name: String, size: f64, mtime_ms: f64) {
         self.files.push(PathBuf::from(&name));
-        self.host.lock().unwrap().files.push(Source { name, size: size.max(0.0) as u64, base: 0, data: Vec::new() });
+        let mtime = if mtime_ms.is_finite() && mtime_ms > 0.0 { (mtime_ms / 1000.0) as u64 } else { 0 };
+        self.host.lock().unwrap().files.push(Source { name, size: size.max(0.0) as u64, mtime, base: 0, data: Vec::new() });
     }
 
     pub fn start(&mut self) {

@@ -1,0 +1,31 @@
+diff --git a/crates/icy_net/src/protocol/zmodem/sz.rs b/crates/icy_net/src/protocol/zmodem/sz.rs
+index 4914323..17d824b 100644
+--- a/crates/icy_net/src/protocol/zmodem/sz.rs
++++ b/crates/icy_net/src/protocol/zmodem/sz.rs
+@@ -2,6 +2,7 @@
+ // Changed for enig-term (patches/icy_board/0003-zmodem-sz-ignore-repeated-zrpos.patch): a repeated ZRPOS for the same offset within a second is ignored.
+ // Changed for enig-term (patches/icy_board/0004-zmodem-host-reads-and-skips.patch): file data is awaited from the host.
+ // Changed for enig-term (patches/icy_board/0005-zmodem-sz-skip-noise-before-headers.patch): text before a header is skipped, not an error.
++// Changed for enig-term (patches/icy_board/0007-zmodem-sz-zfile-mtime-and-batch.patch): ZFILE carries the modification time and the batch left.
+ #![allow(clippy::unused_self)]
+ 
+ use std::{
+@@ -539,7 +540,17 @@ impl Sz {
+             let mut b =
+                 Header::from_flags(ZFrameType::File, 0, 0, zfile_flag::ZMNEW, zfile_flag::ZCRESUM).build(self.get_header_type(), self.can_esc_control());
+ 
+-            let data = { format!("{}\0{}\0", transfer_state.send_state.file_name, transfer_state.send_state.file_size).into_bytes() };
++            // enig-term: also the modification time and what is left of the batch, as ZFILE's
++            // info allows (receivers otherwise make up a date: sexyz stamped year 2446).
++            let data = {
++                format!(
++                    "{}\0{}{}\0",
++                    transfer_state.send_state.file_name,
++                    transfer_state.send_state.file_size,
++                    crate::rt::zfile_info(&self.cur_file)
++                )
++                .into_bytes()
++            };
+ 
+             b.extend_from_slice(&self.encode_subpacket(ZCRCW, &data));
+             com.send(&b).await?;

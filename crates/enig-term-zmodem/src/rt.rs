@@ -108,6 +108,8 @@ pub enum FileEvent {
 pub struct Source {
     pub name: String,
     pub size: u64,
+    /// Modification time, seconds since the epoch (0: unknown).
+    pub mtime: u64,
     /// The window of the file the host has filled: `data` starts at `base`.
     pub base: u64,
     pub data: Vec<u8>,
@@ -160,6 +162,18 @@ pub fn accept_file(name: &str, size: u64) -> bool {
         return false;
     }
     true
+}
+
+/// The rest of ZFILE's info after the length (patch 0007): " mtime(octal)
+/// mode serial files-left bytes-left", or nothing for an unknown file.
+pub fn zfile_info(path: &Path) -> String {
+    let Ok(host) = current() else { return String::new() };
+    let h = host.lock().unwrap();
+    let key = path.to_string_lossy();
+    let Some(idx) = h.files.iter().position(|f| f.name == key) else { return String::new() };
+    let left = &h.files[idx..];
+    let bytes: u64 = left.iter().map(|f| f.size).sum();
+    format!(" {:o} 0 0 {} {}", h.files[idx].mtime, left.len(), bytes)
 }
 
 /// More than this is asked of the host at once.

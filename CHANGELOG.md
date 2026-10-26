@@ -34,9 +34,10 @@
   block), status text skipped.
 - **ZModem** is icy_net's (icy_board, Apache-2.0) in a second, lazily loaded
   WASM (`enig-term-zmodem.wasm`, about 70 KB gzipped), built from a sparse,
-  pinned checkout with six patches: the wasm32 port, and fixes found here
+  pinned checkout with seven patches: the wasm32 port, and fixes found here
   (a CAN abort inside data, ZRPOS ping-pong with lrzsz, windowed upload reads
-  and skipping refused files, text before headers, overlong subpackets). See
+  and skipping refused files, text before headers, overlong subpackets, the
+  modification time in ZFILE). See
   `SPIKE.md` for why icy_net and not zmodem.js.
 - **API and config**: `download()`, `upload()`, `cancelTransfer()`, `transfer`
   and the `transfer` event; config.json `transfers`, `zmodemDetect` (a user

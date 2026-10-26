@@ -435,7 +435,7 @@ Date: 2026-10-26. **(V)** verified by running, **(I)** inferred.
 `enig-term-zmodem.wasm`). It passed the same harness where zmodem.js failed
 everything against sexyz, it recovers from damaged data where zmodem.js by
 design does not, and it is maintained. The cost is a 70 KB gzipped WASM,
-loaded only for a transfer, and six small patches (four of them bug fixes to
+loaded only for a transfer, and seven small patches (five of them fixes to
 offer upstream).
 
 ## Candidates
@@ -512,6 +512,9 @@ stream" and the fake BBS):
    error and aborted after three ("rz waiting to receive.", sexyz's banner).
 6. **0006**: text spliced into a data subpacket made it overlong, which was
    fatal; it is now a damaged subpacket and asked for again.
+7. **0007**: the ZFILE info carried only name and length; sexyz then dated
+   ENiGMA uploads in the year 2446 (V, the file area). It now carries the
+   modification time and what is left of the batch.
 
 The one remaining harness failure is sexyz's: it cannot send an empty file
 with ZModem. It rejects the receiver's ZRPOS 0 ("Received INVALID ZRPOS
@@ -547,8 +550,9 @@ timeout, or the board's menu when it returns).
     subpacket as the abort.
 27. Patch 0003: ignore a repeated ZRPOS for the same offset while the
     restart is in flight.
-28. Patches 0005 and 0006: skip noise before headers in the sender, and
-    treat an overlong subpacket as recoverable.
+28. Patches 0005, 0006 and 0007: skip noise before headers in the sender,
+    treat an overlong subpacket as recoverable, and send the modification
+    time (and files/bytes left) in ZFILE.
 29. A receive-side inactivity timeout and the ZRINIT resend (commented out
     in `rz.rs`), so a vanished sender does not leave the receiver waiting.
 30. Expose the receiver's state (in a file or between frames), so a host can

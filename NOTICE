@@ -49,8 +49,9 @@ icy_net's ZModem (dist/enig-term-zmodem.wasm, loaded for a file transfer)
   clock, timeouts and file I/O from crates/enig-term-zmodem/src/rt.rs), a
   CAN abort inside file data ends the transfer, a repeated ZRPOS within a
   second is ignored, file data is awaited from the host and an offered file
-  may be skipped, text before a header is skipped by the sender, and an
-  overlong subpacket is asked for again. zmodem/constants.rs carries the
+  may be skipped, text before a header is skipped by the sender, an
+  overlong subpacket is asked for again, and ZFILE carries the modification
+  time and what is left of the batch. zmodem/constants.rs carries the
   comment that its constants were taken from Omen Technology's ZMODEM.H
   (Chuck Forsberg, 1989-1991). The wrapper (crates/enig-term-zmodem/src)
   is enig-term's own (BSD-2-Clause). Its Rust dependencies are listed in

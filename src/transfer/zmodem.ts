@@ -96,7 +96,7 @@ export class ZmodemEngine implements TransferEngine {
         this.opts = opts;
         this.lastInput = this.lastActivity = opts.now();
         this.s = new ZSession(mode, opts.now(), opts.blockLen ?? 8192, opts.maxBytes ?? 0);
-        for (const f of files) this.s.add_file(f.name, f.size);
+        for (const f of files) this.s.add_file(f.name, f.size, f.mtime ?? 0);
         this.guard(s => {
             s.start();
             if (initial?.length) s.feed(initial);

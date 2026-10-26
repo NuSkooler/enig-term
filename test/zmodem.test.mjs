@@ -16,7 +16,8 @@ await loadZmodem(fs.readFileSync(path.join(here, '..', 'build', 'wasm-zmodem', '
 
 const enc = s => new TextEncoder().encode(s);
 const now = () => performance.now();
-const src = (name, data, reads) => ({ name, size: data.length, read: (o, n) => (reads?.push(n), Promise.resolve(data.subarray(o, o + n))) });
+const MTIME = Date.UTC(2024, 4, 17, 12, 0, 0);
+const src = (name, data, reads) => ({ name, size: data.length, mtime: MTIME, read: (o, n) => (reads?.push(n), Promise.resolve(data.subarray(o, o + n))) });
 
 function sink() {
     const files = [];
@@ -63,8 +64,9 @@ async function upload(peer, set, opts = {}) {
     const files = opts.files ?? SETS[set]();
     const res = await runPeer(peerCommand(peer, dir), io => new ZmodemEngine('send', files.map(([n, d]) => src(n, d, opts.reads)), io.send, { ...quiet(), done: x => io.done(x) }, { now, ...opts.zm }), opts.run);
     const got = Object.fromEntries(fs.readdirSync(dir).map(n => [n, fs.readFileSync(path.join(dir, n))]));
+    const mtimes = fs.readdirSync(dir).map(n => fs.statSync(path.join(dir, n)).mtimeMs);
     fs.rmSync(dir, { recursive: true, force: true });
-    return { res, got, files };
+    return { res, got, files, mtimes };
 }
 
 const PEERS = [
@@ -90,7 +92,9 @@ for (const [label, down, up, skip] of PEERS) {
             for (const [n, d] of files) assert.equal(sha(r.files.find(f => f.name === n).data), sha(d), `${n} differs`);
         });
         test(`us -> ${label} ${up} (${set})`, { skip }, async () => {
-            const { res, got, files } = await upload(up, set);
+            const { res, got, files, mtimes } = await upload(up, set);
+            // ZFILE carries the modification time (patch 0007); the program sets it.
+            assert.deepEqual([...new Set(mtimes)], files.length ? [MTIME] : []);
             assert.equal(res.result.ok, true, `${JSON.stringify(res.result)}\n${res.stderr.slice(-1500)}`);
             assert.equal(res.exit.code, 0, res.stderr.slice(-1500));
             assert.deepEqual(Object.keys(got).sort(), files.map(f => f[0]).sort());
