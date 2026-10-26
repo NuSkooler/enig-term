@@ -28,6 +28,28 @@ button[data-sound="idle"] { border-color: var(--et-edge); color: var(--et-ink); 
 .settings .group { display: contents; }
 .settings input[type="range"] { width: 7rem; accent-color: var(--et-accent); }
 .settings .note { color: var(--et-dim); }
+.xfer { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 4; width: min(92%, 32rem); background: rgba(22,22,28,.97);
+  border: 1px solid var(--et-edge); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.xfer[hidden] { display: none; }
+.xfer[data-phase="offer"], .xfer[data-phase="armed"] { border-color: var(--et-accent); }
+.xfer[data-phase="failed"] { border-color: var(--et-error); }
+.xfer .note:empty, .xfer .xf-file:empty, .xfer .xf-list:empty { display: none; }
+.xfer .xf-file { overflow-wrap: anywhere; }
+.xf-bar { height: 8px; background: var(--et-bg); border: 1px solid var(--et-edge); border-radius: 4px; overflow: hidden; }
+.xf-bar[hidden] { display: none; }
+.xf-bar span { display: block; height: 100%; width: 0; background: var(--et-accent); }
+.xf-bar.indeterminate span { width: 30%; animation: et-slide 1.2s linear infinite; }
+@keyframes et-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.xf-list { margin: 0; padding: 0; list-style: none; max-height: 9em; overflow: auto; }
+.xf-list li { overflow-wrap: anywhere; }
+.xf-list li.bad { color: var(--et-warn); }
+.xf-list a { color: var(--et-accent); }
+.xf-error { color: var(--et-error); }
+.xfer .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.xfer .actions [hidden], .settings [hidden] { display: none; }
+.xfer .primary, .settings .primary { border-color: var(--et-accent); color: var(--et-accent); }
+.settings .text { background: var(--et-bg); color: var(--et-ink); border: 1px solid var(--et-edge); padding: 4px 6px; font: inherit; border-radius: 3px; width: 11rem; }
+.settings .hint { flex-basis: 100%; }
 .soundprompt { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; align-items: center; z-index: 3;
   background: rgba(22,22,28,.96); border: 1px solid var(--et-warn); border-radius: 4px; padding: 6px 8px; max-width: min(92%, 34rem); }
 .soundprompt[hidden] { display: none; }

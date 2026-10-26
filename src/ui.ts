@@ -4,6 +4,7 @@
 import { saveUserSettings, userMayChange, USER_KEYS, type KeyBarMode, type Options, type UserSettings } from './config.ts';
 import { STYLES } from './styles.ts';
 import type { ConnState, Terminal } from './terminal.ts';
+import { label, size, type TransferDirection, type TransferProtocol, type TransferStatus } from './transfers.ts';
 
 const html = String.raw;
 
@@ -21,6 +22,7 @@ const TEMPLATE = html`
       <button type="button" data-act="sound" data-sound="idle" aria-pressed="true" title="Sound on or off">Sound</button>
       <input type="range" class="vol" data-set="volume" min="0" max="100" step="1" aria-label="Volume" title="Volume">
     </span>
+    <button type="button" data-act="files" aria-expanded="false" aria-controls="et-files" title="Download or upload files (ZModem, YModem, XModem)">Files</button>
     <button type="button" data-act="settings" aria-expanded="false" aria-controls="et-settings">Settings</button>
     <button type="button" data-act="fullscreen" aria-pressed="false" title="Full screen">Full screen</button>
   </div>
@@ -43,10 +45,36 @@ const TEMPLATE = html`
     </span>
     <a class="credits" data-credits target="_blank" rel="noopener">Credits and licences</a>
   </div>
+  <div class="settings files" id="et-files" data-files hidden>
+    <label>Transfer <select data-xf="dir"><option value="download">Download</option><option value="upload">Upload</option></select></label>
+    <label>Protocol <select data-xf="proto"><option value="zmodem">ZModem</option><option value="ymodem">YModem</option><option value="xmodem">XModem</option></select></label>
+    <span class="group" data-xf-up><button type="button" data-act="xf-pick">Choose files…</button><span class="note" data-xf-chosen>No files chosen</span></span>
+    <label data-xf-namebox>Save as <input type="text" class="text" data-xf="name" value="download.bin" spellcheck="false" autocomplete="off" autocapitalize="off"></label>
+    <button type="button" class="primary" data-act="xf-start">Start</button>
+    <span class="group" data-xf-folderbox hidden><button type="button" data-act="xf-folder" title="Save downloads straight into a folder (no size limit)">Save into a folder…</button><span class="note" data-xf-folder></span></span>
+    <label>ZModem downloads <select data-set="zmodemDetect"><option value="auto">Start by themselves</option><option value="ask">Ask first</option><option value="off">Off (shown as text)</option></select></label>
+    <span class="note hint" data-xf-hint></span>
+    <input type="file" data-xf-input multiple hidden>
+  </div>
   <div class="stage" data-stage>
     <div class="term" data-term></div>
     <div class="scrollmark" data-scrollmark hidden><span data-scrolltext></span><button type="button" data-act="live">Live</button></div>
     <div class="toast" data-toast hidden role="status" aria-live="polite"><span data-toasttext></span><button type="button" data-act="toast-close" aria-label="Dismiss">&times;</button></div>
+    <div class="xfer" data-xfer hidden role="dialog" aria-label="File transfer" part="transfer">
+      <div class="xf-head"><strong data-xf-title></strong></div>
+      <div class="note" data-xf-msg></div>
+      <div class="xf-file" data-xf-file></div>
+      <div class="xf-bar" data-xf-bar><span data-xf-fill></span></div>
+      <div class="note xf-stats" data-xf-stats></div>
+      <ul class="xf-list" data-xf-list></ul>
+      <div class="xf-error" data-xf-error hidden></div>
+      <div class="actions">
+        <button type="button" data-act="xf-offer-files" class="primary" hidden>Choose files…</button>
+        <button type="button" data-act="xf-offer-accept" class="primary" hidden>Receive</button>
+        <button type="button" data-act="xf-cancel">Cancel</button>
+        <button type="button" data-act="xf-close" hidden>Close</button>
+      </div>
+    </div>
     <div class="soundprompt" data-soundprompt hidden role="status"><button type="button" class="primary" data-act="sound-enable">This board plays sound: click to enable it</button><button type="button" data-act="sound-dismiss" aria-label="Dismiss">&times;</button></div>
   </div>
   <div class="keybar" data-keybar hidden part="keybar">
@@ -81,6 +109,15 @@ const TEMPLATE = html`
   </dialog>
 </div>`;
 
+/** Seconds as m:ss (or h:mm:ss). */
+function clock(sec: number): string {
+    const s = Math.round(sec);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = String(s % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
 const STATE_TEXT: Record<ConnState, string> = {
     idle: 'Not connected',
     connecting: 'Connecting…',
@@ -99,6 +136,11 @@ export class Chrome {
     private toastTimer = 0;
     private pendingLink = '';
     private promptDismissed = false;
+    /** Files chosen in the Files panel for the next upload. */
+    private picked: File[] = [];
+    /** What the file picker was opened for: the panel, or the board's ZModem offer. */
+    private pickFor: 'panel' | 'offer' = 'panel';
+    private xferTimer = 0;
     private coarse = window.matchMedia?.('(pointer: coarse)');
     private disposers: (() => void)[] = [];
     terminal: Terminal | null = null;
@@ -207,6 +249,8 @@ export class Chrome {
 
         this.bindSettings();
         this.bindKeyBar();
+        this.bindFiles();
+        t.events.on('transfer', st => this.showTransfer(st));
 
         t.events.on('state', ev => this.showState(ev.state, ev.detail, ev.reconnectInMs));
         t.events.on('notice', ev => this.toast(ev.text, ev.level));
@@ -353,6 +397,10 @@ export class Chrome {
         this.opts[key] = value;
         if (key === 'keyBar') this.updateKeyBar();
         else if (key === 'toolbar') this.q<HTMLElement>('.toolbar').hidden = !value;
+        else if (key === 'transfers') {
+            this.q('[data-act="files"]').hidden = !value;
+            t.set(key, value);
+        }
         else if (key === 'title') this.q('[data-title]').textContent = String(value);
         else if (key === 'endpoint') {
             if (!this.opts.lockEndpoint || !fromUser) this.q<HTMLInputElement>('[data-host]').value = String(value ?? '');
@@ -361,6 +409,179 @@ export class Chrome {
         if (fromUser && this.opts.persist && (USER_KEYS as readonly string[]).includes(key)) {
             (this.user as Record<string, unknown>)[key] = value;
             if (!saveUserSettings(this.user)) this.toast('Settings could not be saved in this browser.', 'info');
+        }
+    }
+
+    // --- file transfers -----------------------------------------------------------------
+
+    private bindFiles(): void {
+        const t = this.terminal!;
+        const panel = this.q('[data-files]');
+        const btn = this.q('[data-act="files"]');
+        const dir = this.q<HTMLSelectElement>('[data-xf="dir"]');
+        const proto = this.q<HTMLSelectElement>('[data-xf="proto"]');
+        const input = this.q<HTMLInputElement>('[data-xf-input]');
+        btn.hidden = !this.opts.transfers;
+        this.on('[data-act="files"]', 'click', () => {
+            panel.hidden = !panel.hidden;
+            btn.setAttribute('aria-expanded', String(!panel.hidden));
+            this.syncFiles();
+        });
+        dir.addEventListener('change', () => this.syncFiles());
+        proto.addEventListener('change', () => {
+            if (proto.value === 'xmodem' && this.picked.length > 1) this.picked = this.picked.slice(0, 1);
+            this.syncFiles();
+        });
+        this.on('[data-act="xf-pick"]', 'click', () => this.pickFiles('panel'));
+        this.on('[data-act="xf-offer-files"]', 'click', () => this.pickFiles('offer'));
+        input.addEventListener('change', () => {
+            const files = Array.from(input.files ?? []);
+            input.value = '';
+            if (!files.length) return;
+            if (this.pickFor === 'offer') t.transfers.accept(files);
+            else {
+                this.picked = proto.value === 'xmodem' ? files.slice(0, 1) : files;
+                this.syncFiles();
+            }
+        });
+        this.on('[data-act="xf-start"]', 'click', () => {
+            const d = dir.value as TransferDirection;
+            const p = proto.value as TransferProtocol;
+            let ok: boolean;
+            if (d === 'download') ok = t.transfers.download(p, this.q<HTMLInputElement>('[data-xf="name"]').value.trim() || 'download.bin');
+            else if (!this.picked.length) {
+                this.toast('Choose the files to send first.', 'info');
+                ok = false;
+            } else ok = t.transfers.upload(this.picked, p);
+            if (!ok) return;
+            panel.hidden = true;
+            btn.setAttribute('aria-expanded', 'false');
+            if (d === 'upload') {
+                this.picked = [];
+                this.syncFiles();
+            }
+        });
+        this.on('[data-act="xf-folder"]', 'click', () => {
+            void t.transfers.chooseFolder().then(name => {
+                if (name) this.q('[data-xf-folder]').textContent = `Saving into “${name}”`;
+            });
+        });
+        this.on('[data-act="xf-offer-accept"]', 'click', () => t.transfers.accept([]));
+        this.on('[data-act="xf-cancel"]', 'click', () => t.transfers.cancel());
+        this.on('[data-act="xf-close"]', 'click', () => {
+            t.transfers.dismiss();
+            t.input.focus();
+        });
+        this.syncFiles();
+    }
+
+    /** Open the file picker (from a click: browsers require one). */
+    private pickFiles(forWhat: 'panel' | 'offer'): void {
+        const input = this.q<HTMLInputElement>('[data-xf-input]');
+        this.pickFor = forWhat;
+        input.multiple = !(forWhat === 'panel' && this.q<HTMLSelectElement>('[data-xf="proto"]').value === 'xmodem');
+        input.click();
+    }
+
+    /** The Files panel shows what the chosen direction and protocol need. */
+    private syncFiles(): void {
+        const t = this.terminal!;
+        const d = this.q<HTMLSelectElement>('[data-xf="dir"]').value as TransferDirection;
+        const p = this.q<HTMLSelectElement>('[data-xf="proto"]').value as TransferProtocol;
+        this.q('[data-xf-up]').hidden = d !== 'upload';
+        this.q('[data-xf-namebox]').hidden = !(d === 'download' && p === 'xmodem');
+        this.q('[data-xf-folderbox]').hidden = !(d === 'download' && t.transfers.canPickFolder);
+        const folder = t.transfers.folderName;
+        this.q('[data-xf-folder]').textContent = folder ? `Saving into “${folder}”` : '';
+        const n = this.picked.length;
+        this.q('[data-xf-chosen]').textContent = n ? (n === 1 ? `${this.picked[0].name} (${size(this.picked[0].size)})` : `${n} files (${size(this.picked.reduce((a, f) => a + f.size, 0))})`) : 'No files chosen';
+        const start = this.q<HTMLButtonElement>('[data-act="xf-start"]');
+        start.textContent = p === 'zmodem' ? (d === 'download' ? 'Wait for the board' : 'Send when the board is ready') : d === 'download' ? 'Receive' : 'Send';
+        this.q('[data-xf-hint]').textContent =
+            p === 'zmodem'
+                ? d === 'download'
+                    ? 'Choose the files on the board and start its ZModem download: it begins here by itself.'
+                    : 'Choose files, then start the upload on the board (or start it on the board first: you will be asked for files).'
+                : d === 'download'
+                  ? `Start the ${label(p)} download on the board first, then press Receive.`
+                  : `Choose ${p === 'xmodem' ? 'a file' : 'files'} and press Send, then start the ${label(p)} upload on the board within a minute.`;
+    }
+
+    /** The transfer card over the screen: an offer, progress, or the outcome. */
+    showTransfer(st: TransferStatus): void {
+        const t = this.terminal!;
+        const card = this.q('[data-xfer]');
+        clearTimeout(this.xferTimer);
+        if (st.phase === 'idle') {
+            card.hidden = true;
+            return;
+        }
+        card.hidden = false;
+        card.dataset.phase = st.phase;
+        const up = st.direction === 'upload';
+        const proto = label(st.protocol);
+        const running = st.phase === 'loading' || st.phase === 'running';
+        const over = st.phase === 'done' || st.phase === 'failed' || st.phase === 'cancelled';
+        const titles: Record<string, string> = {
+            armed: `${up ? 'Upload' : 'Download'} (${proto})`,
+            offer: up ? 'The board is ready to receive files (ZModem)' : 'The board wants to send files (ZModem)',
+            loading: `${up ? 'Uploading' : 'Downloading'} (${proto})`,
+            running: `${up ? 'Uploading' : 'Downloading'} (${proto})`,
+            done: `${up ? 'Upload' : 'Download'} complete`,
+            failed: `${up ? 'Upload' : 'Download'} failed`,
+            cancelled: st.error === 'refused' ? 'Transfer refused' : `${up ? 'Upload' : 'Download'} cancelled`,
+        };
+        this.q('[data-xf-title]').textContent = titles[st.phase] ?? '';
+        this.q('[data-xf-msg]').textContent = st.message ?? '';
+        const f = st.file;
+        const nth = f ? (f.count && f.count > 1 ? ` · ${f.index + 1} of ${f.count}` : f.index > 0 ? ` · file ${f.index + 1}` : '') : '';
+        this.q('[data-xf-file]').textContent = running && f ? `${f.name}${nth}` : '';
+        const bar = this.q('[data-xf-bar]');
+        bar.hidden = !(running && f);
+        const frac = f && f.size ? Math.min(1, st.fileBytes / f.size) : f && f.size === 0 ? 1 : null;
+        bar.classList.toggle('indeterminate', frac === null);
+        this.q<HTMLElement>('[data-xf-fill]').style.width = frac === null ? '' : `${(frac * 100).toFixed(1)}%`;
+        let stats = '';
+        if (running && f) {
+            stats = `${size(st.fileBytes)}${f.size != null ? ` of ${size(f.size)}` : ''}`;
+            if (st.rate > 0) stats += ` · ${size(Math.round(st.rate))}/s`;
+            if (st.eta != null && st.rate > 0) stats += ` · ${clock(st.eta)} left`;
+        } else if (over && st.files.length) {
+            const ok = st.files.filter(x => x.ok);
+            stats = `${ok.length} file${ok.length === 1 ? '' : 's'}, ${size(ok.reduce((a, x) => a + x.size, 0))}${up ? ' sent' : ' received'}`;
+        }
+        this.q('[data-xf-stats]').textContent = stats;
+        const list = this.q('[data-xf-list]');
+        list.replaceChildren(
+            ...[...st.files.map(x => ({ ...x, skipped: false })), ...st.skipped.map(x => ({ name: x.name, size: x.size, ok: false, url: undefined, where: 'download' as const, skipped: true }))].map(x => {
+                const li = document.createElement('li');
+                li.className = x.ok ? 'ok' : 'bad';
+                const name = document.createElement('span');
+                name.textContent = `${x.ok ? '✓' : '✗'} ${x.name} (${size(x.size)})${x.skipped ? ': skipped, too large' : x.ok ? (up ? '' : x.where === 'folder' ? ': saved in the folder' : '') : ': incomplete'}`;
+                li.appendChild(name);
+                if (x.ok && x.url) {
+                    const a = document.createElement('a');
+                    a.href = x.url;
+                    a.download = x.name;
+                    a.textContent = 'Save again';
+                    li.append(' ', a);
+                }
+                return li;
+            }),
+        );
+        const err = this.q('[data-xf-error]');
+        err.hidden = !(over && st.error && st.error !== 'refused');
+        err.textContent = st.error ? `${st.error[0].toUpperCase()}${st.error.slice(1)}.` : '';
+        this.q('[data-act="xf-offer-files"]').hidden = !(st.phase === 'offer' && up);
+        this.q('[data-act="xf-offer-accept"]').hidden = !(st.phase === 'offer' && !up);
+        const cancel = this.q('[data-act="xf-cancel"]');
+        cancel.hidden = over;
+        cancel.textContent = st.phase === 'offer' ? 'Refuse' : 'Cancel';
+        this.q('[data-act="xf-close"]').hidden = !over;
+        if (over) {
+            // The line is the terminal's again: so is the keyboard.
+            t.input.focus();
+            if (st.phase === 'done' || st.error === 'refused') this.xferTimer = window.setTimeout(() => t.transfers.dismiss(), 8000);
         }
     }
 
@@ -482,5 +703,6 @@ export class Chrome {
     destroy(): void {
         for (const d of this.disposers) d();
         clearTimeout(this.toastTimer);
+        clearTimeout(this.xferTimer);
     }
 }
