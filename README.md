@@ -7,13 +7,13 @@ input, scrollback, selection, links, UI) and a WebGL2 output pass with sharp
 scaling, 4:3 aspect correction and an optional CRT effect (2D-canvas
 fallback).
 
-Status: **Phase 2 (fonts and Amiga)**, version 0.1.0, not released. See
+Status: **Phase 3 (audio)**, version 0.1.0, not released. See
 `CHANGELOG.md`, and `SPIKE.md` for the Phase 0 measurements behind the design.
 
 - [Build](#build) · [Test](#test) · [dist/ layout](#dist-layout) ·
   [Standalone page](#standalone-page) · [config.json v1](#configjson-v1) ·
   [Embedding](#embedding) · [Settings](#settings) · [Keyboard](#keyboard) ·
-  [Fonts](#fonts) · [Amiga profile](#amiga-profile) ·
+  [Fonts](#fonts) · [Amiga profile](#amiga-profile) · [Audio](#audio) ·
   [Behaviour notes](#behaviour-notes) · [Licences](#licences)
 
 ## Build
@@ -74,6 +74,8 @@ npm test             # typecheck, Node unit tests, Playwright (needs a built dis
 npm run test:unit    # core (WASM) and shell tests in Node
 npm run test:browser # Playwright: chromium, webkit, firefox, Pixel 7, iPhone 14
 npm run fuzz -- 60   # feed fuzzer for N seconds (optional seed as 2nd argument)
+npm run fuzz:audio -- 30   # audio fuzzer: APC strings, CSI = 7, music through core and engine
+FFMPEG=... npm run fixtures:audio   # regenerate test/fixtures/audio/ and src/audio/probes.ts (rarely)
 ENIG_TERM_LIVE_WS=ws://127.0.0.1:18810 npm run test:live            # a throwaway ENiGMA
 ENIG_TERM_LIVE_PAGE=http://127.0.0.1:18080/_enig/ws-term/ npm run test:live   # through ENiGMA's route
 npm run fonts:amiga  # optional: install the Amiga fonts into test/amiga-fonts/ (gitignored)
@@ -108,7 +110,12 @@ and the 2D fallback, the keymap and typed/pasted encodings, synthetic IME
 composition and Gboard-style input, selection and copy, link confirmation,
 scrollback, connection states and reconnect against a fake Telnet BBS
 (`test/fake-bbs.mjs`), panic recovery, phone layouts and the key bar, and the
-custom element on a hostile foreign page. Screenshots go to
+custom element on a hostile foreign page, and audio (`audio.spec.ts`:
+OfflineAudioContext measurements, formats, autoplay lock, mute/volume,
+holds, the cache, font notices; `audio-interop.spec.ts`: ansi-bbs-utils
+0.2.1's host side over a WebSocket). The Node tests drive the real engine
+with ansi-bbs-utils' `Terminal` against enig-term and against its
+`Testing.FakeCTerm` with the same calls (`test/audio.test.mjs`). Screenshots go to
 `test/screenshots/` (gitignored) for checking by eye.
 
 ### Development server
@@ -130,6 +137,8 @@ route serves it as is, so this layout is a contract:
 | `index.html` | The standalone page. Fetches `./config.json` (relative); without one it asks for a host. |
 | `enig-term.js` | The whole shell as one ES module, including the wasm-bindgen glue. Importing it defines `<enig-term>`; it also exports `mount`, `EnigTerm`, `version`. |
 | `enig_term_core_bg.wasm` | The engine. Loaded from next to `enig-term.js` (resolved from `import.meta.url`), as `enig_term_core_bg.wasm?v=<16 hex digits of its SHA-256>`, so a bundle never pairs with a different WASM even though file names carry no hash. |
+| `enig-term-audio.js` | The audio engine (CTerm audio, "ANSI" music, the file cache), an ES module the bundle imports from next to itself (`?v=<hash>`) the first time a board uses audio. |
+| `enig-term-ogg.js` | Ogg Vorbis and Opus decoders (WebAssembly inside), imported by the engine only when the browser cannot decode an Ogg file itself. |
 | `fonts/` | `manifest.json` (SyncTERM slot -> file, code page, source, licence), `pc/*.psf` (48 PSF2 fonts, about 157 KB), and their `LICENSE` (CC BY-SA 4.0) and `README.txt`. Fetched lazily from next to `enig-term.js`: the manifest as `manifest.json?v=<16 hex digits of its SHA-256>` (stamped into the bundle), each font as `<file>?v=<16 hex digits of its own SHA-256>`, so all of it can be cached for good. |
 | `fonts/amiga/` | **Not shipped.** Created by the operator with `tools/fetch-amiga-fonts.mjs` (see [Amiga fonts](#amiga-fonts)). Its manifest is fetched with revalidation. The build fails if it appears in `dist/`. |
 | `tools/fetch-amiga-fonts.mjs` | The operator's Amiga font installer (Node 18+, no dependencies, no root). |
@@ -154,11 +163,13 @@ parameters (standalone page only) override `config.json`:
 | `scale=fit\|integer`, `keys=auto\|on\|off`, `profile=auto\|pc\|amiga` | `scale`, `keyBar`, `profile` |
 | `amigaPalette=ncomm\|term-ega`, `amigaAspect=pal\|ntsc\|<1-3>`, `amigaRows=` | the same |
 | `cols=`, `rows=`, `scrollback=`, `renderer=webgl2\|2d`, `autoReconnect=0/1` | the same |
+| `mute=0/1`, `volume=0-100`, `musicTone=square\|syncterm\|sine` | the same |
 
 Test hooks, never on by default: `naws=0` (refuse NAWS, so a host falls back
 to `CSI 255 n`), `debugDa=cterm` (answer DA as CTerm, for ENiGMA builds that
 only probe CTerm), `debugPanic=1` (let `CSI ? 2026 h` panic the engine, to
-exercise recovery).
+exercise recovery), `audioLock=1` (behave as if the browser refused audio
+until a gesture), `audioFallback=1` (decode Ogg with the bundled decoders).
 
 ## config.json v1
 
@@ -202,6 +213,13 @@ invalid values are dropped with a console warning. ENiGMA generates
 | `persist` | boolean | `true` | Remember user settings in `localStorage`. |
 | `blink` | boolean | `true` | Text and cursor blink (off is for screenshots). |
 | `urlParams` | boolean | `false` | Read URL parameters (the standalone page sets it). |
+| `sound` | boolean | `true` | Sound at all ([Audio](#audio)): `false` answers no audio query and plays nothing. |
+| `mute` | boolean | `false` | Muted (a user setting). |
+| `volume` | integer 0-100 | `70` | Master volume (a user setting). |
+| `musicTone` | `"square"`, `"syncterm"` or `"sine"` | `"square"` | Voice of "ANSI" music (a user setting). |
+| `audioCache` | integer (MB) | `64` | Board sounds kept in IndexedDB, all boards together (LRU); `0`: none kept (files last until the page closes). |
+| `audioMaxFile` | integer (MB) 1-64 | `16` | Largest sound file a board may store, load or send. |
+| `audioMemory` | integer (MB) 16-2048 | `192` | Decoded audio held at once (slots and channels). |
 
 Example: `config.example.json`.
 
@@ -230,12 +248,13 @@ Attributes: `config` (URL of a `config.json`, relative to the page),
 `profile`, `scrollback`, `crt`, `aspect`, `scale`, `keybar`, `toolbar`,
 `persist`, `url-params`, `renderer`, `blink`, `auto-reconnect`,
 `backspace`, `fonts`, `amiga-fonts`, `amiga-palette`, `amiga-aspect`,
-`amiga-rows`, and `fill` (fit the element's height too; give it a height).
+`amiga-rows`, `sound`, `mute`, `volume`, `music-tone`, and `fill` (fit the
+element's height too; give it a height).
 Booleans: present, `on`, `true` or `1` is on; `off`, `false` or `0` is off.
 `endpoint`, `title`, `crt`, `aspect`, `scale`, `keybar`, `toolbar`,
 `auto-reconnect`, `backspace`, `blink`, `scrollback`, `profile`,
-`amiga-palette`, `amiga-aspect` and `amiga-rows` also apply when changed
-later. The element has `ready` (a promise of the handle), `handle`,
+`amiga-palette`, `amiga-aspect`, `amiga-rows`, `mute`, `volume` and
+`music-tone` also apply when changed later. The element has `ready` (a promise of the handle), `handle`,
 `connect()` and `disconnect()`.
 
 ```js
@@ -253,7 +272,9 @@ Handle: `connect(endpoint?)`, `disconnect()`, `setOption(key, value)`,
 `getOption(key)`, `on(event, fn)` (returns an unsubscribe function),
 `send(text)`, `paste(text)`, `write(data)` (as if from the host),
 `copySelection()`, `focus()`, `resize(cols, rows)`, `toggleFullscreen()`,
-`state`, `version`, `destroy()`, and `terminal` (internals; not stable).
+`soundState`, `enableSound()` (from a user gesture: your own "enable sound"
+control), `clearSoundCache()`, `state`, `version`, `destroy()`, and
+`terminal` (internals; not stable).
 
 Events (on the handle, and as DOM `CustomEvent`s on `<enig-term>` with the
 event object as `detail`):
@@ -269,6 +290,7 @@ event object as `detail`):
 | `scroll` | `{ offset, lines }`: the scrollback view moved (0 = live) |
 | `selection` | `{ text }` |
 | `profile` | `{ profile, setting }`: the look in effect changed (`pc` or `amiga`; `setting` is the configured `auto`/`pc`/`amiga`) |
+| `sound` | `{ state }`: `off` (disabled or unsupported), `idle` (no audio yet), `locked` (the board plays sound; waiting for a gesture), `on`, `muted` |
 
 Isolation: everything lives in an open shadow root. The page's CSS does not
 reach in (inherited properties are reset at the root), and nothing is added
@@ -282,10 +304,12 @@ The Settings panel holds the user-settable keys, saved per origin in
 `localStorage` (`enig-term:settings:v1`; every access is guarded, and the
 terminal works without storage): `crt`, `aspect`, `scale`, `keyBar`,
 `autoReconnect`, `backspace`, `profile` ("Look": Auto, PC, Amiga),
-`amigaPalette`, `amigaAspect` (and `sharp` through the API). Keys in the
+`amigaPalette`, `amigaAspect`, `mute`, `volume`, `musicTone` (and `sharp`
+through the API), plus **Clear sound cache**. Keys in the
 config's `lock` are shown disabled. The panel links to the credits page.
 The toolbar also has the host input,
-Connect/Disconnect/Reconnect, Copy, Paste and Full screen (an iPhone, which
+Connect/Disconnect/Reconnect, Copy, Paste, Sound (mute) with a volume
+slider, and Full screen (an iPhone, which
 has no element fullscreen, gets a viewport-covering mode instead).
 
 ## Keyboard
@@ -452,6 +476,164 @@ follows the font in every profile).
   with bright backgrounds; the host's `CSI ? 33 h` is remembered and reported,
   and applies again in the PC profile), block cursor (`amigaCursor`).
 
+## Audio
+
+Two kinds of sound, both through one WebAudio mixer with the user's mute and
+volume:
+
+- **CTerm audio** (`APC SyncTERM:A;...`, `SyncTERM:C;S`/`C;L`, `SyncTERM:Q;...`,
+  `CSI = 7 n`), as the "Audio APCs" section of the current CTerm manual
+  (CTerm 1.332) defines it: what SyncTERM 1.10 and IcyTerm 0.8.4 speak, and
+  what [ansi-bbs-utils](https://github.com/NuSkooler/ansi-bbs-utils) 0.2.1
+  drives.
+- **"ANSI" music** (`CSI | ... ^N`, BananaCom `CSI N ... ^N`, `CSI M ... ^N`),
+  as in the manual's "ANSI" Music section.
+
+The engine (`enig-term-audio.js`, about 13 KB gzipped) is loaded the first
+time a board uses audio; a board that never does costs nothing but the
+toolbar button. Everything audio is off with `sound: false`: the terminal
+then answers no audio query, like a terminal without audio.
+
+### CTerm audio
+
+- **Patch slots** (256) and **channels** (16): `Load` (from the cache),
+  `LoadBlob` (base64 data), `Synth` (SIN, SAW, SQ, SINE_HARM, SINE_SAW,
+  SINE_SAW_CHORD, SINE_SAW_HARM, SILENCE; the four "noisy" shapes sound as
+  SyncTERM makes them), `Copy`, `Queue`, `Flush`, `Volume`, `Wait`, `Update`.
+  Channels 0 and 1 belong to the terminal (0 is "ANSI" music; nothing plays
+  on 1): `Queue` there is refused, `Flush`/`Volume`/`Wait`/`Update` work.
+- **Queue** moves the slot's buffer onto the channel (the slot is empty
+  afterwards); buffers play back to back without gaps. `I=` fades in (first
+  pass of a loop), `O=` fades out the end of the final pass (both scaled to
+  fit a short buffer), `L` loops, `V=`/`VL=`/`VR=` set the buffer's level on
+  top of the channel's. **A later Queue ends a loop** at the end of the pass
+  in progress (the manual's rule; SyncTERM's and IcyTerm's mixers keep
+  looping). **`X`** with `I=`: the buffer playing decays while the new one
+  fades in over `I`, equal-power, both audible during the overlap; on an
+  empty channel it is a plain fade-in.
+- **Flush** drains the channel; with `O=` what is sounding fades out first.
+- **Volume** sets the channel's base level (every channel starts at -12 dB,
+  as in SyncTERM; `V=100` is 0 dB, `V=0` the -60 dB floor, or `V=-6dB`);
+  `T=` ramps from the current level, dB-linear; a side not given keeps its
+  value. Durations: milliseconds, `ms`, `f` (frames at 44.1 kHz) and, for
+  `Synth`'s `T`, `p` (periods of `F`).
+- **Wait** holds the stream (CTerm blocks there) until the channel is idle,
+  or at once if its head buffer loops; at most 5 minutes. **Update** arms a
+  one-shot `CSI = 7 ; ch ; 0 n` for the channel's next running-to-stopped
+  transition.
+- **Replies**: `SyncTERM:Q;libsndfile` -> `CSI = 7 ; 100 ; 1 n`;
+  `SyncTERM:Q;libsndfileFormat;pm;ps` -> `CSI = 7 ; 101 ; pm ; ps ; 0|1 n`
+  (see the table below; the answer is what this browser decodes, tried once
+  on a tiny sample); `CSI = 7 n` -> the running channels (`CSI = 7 n` when
+  idle); `CSI = 7 ; ch n` -> one pair (`ch` 100: the decoder, 1); `C;L` ->
+  the listing; `SyncTERM:Q;JXL` -> `CSI = 1 ; 0 - n`. DA and CTDA are
+  unchanged (CTDA has no audio feature number; a host detects audio with
+  the libsndfile query, as ansi-bbs-utils does).
+- **The file cache** (`C;S` stores, `C;L` lists, `Load` reads) is kept per
+  board (the endpoint without query or fragment) in IndexedDB, so it
+  survives reconnects and reloads and a board uploads a file once.
+  `C;L;<glob>` matches like glob(3): `*` and `?` stay within a directory;
+  files are listed as `path TAB md5`, with their path relative to the cache,
+  and matching subdirectories as `dir/` with no MD5 (SyncTERM prints those
+  blank and files by basename; IcyTerm lists everything at once; hosts that
+  handle both, like ansi-bbs-utils, handle this too). Names are path
+  segments of printable ASCII, without `.`, `..`, `\ : * ? " < > |`. Without
+  IndexedDB (private windows) the files live in memory until the page
+  closes. Settings has **Clear sound cache** (all boards).
+
+### "ANSI" music
+
+`CSI = Ps M` picks the introducers: 0 only `CSI |`, **1 (default) also
+`CSI N`**, 2 also `CSI M` without parameters (otherwise Delete Line, which
+ENiGMA uses). The string is everything up to SO (0x0E); a character outside
+the manual's set ends it unplayed. `T` (32-255, default 120), `O` (0-6,
+default 4), `L` (1-64), `N` (0-71), notes with `+`/`#`/`-`/`.`/length,
+`P`, `<`, `>`, `MF`/`MB`/`MN`/`ML`/`MS`, upper or lower case. Timing is
+CTerm's: a whole note is 240000/tempo ms, dotted x1.5, normal articulation
+sounds 7/8, staccato 3/4, legato all. **Foreground** (`MF`, the default)
+holds the stream until the music has played, as CTerm does (at most two
+minutes per string); `MB` plays in the background. State (tempo, octave,
+length, style) carries over to the next string and resets with `ESC c`.
+Pitch: note 0 is C in octave 0, 65.406 Hz, equal-tempered (the manual's
+table), so the default octave's C is 1046.5 Hz. Voice: **`musicTone`**
+`square` (default: a band-limited square, the PC speaker), `syncterm`
+(SyncTERM's SINE_SAW_HARM timbre) or `sine`. Music plays on channel 0.
+
+### Autoplay, mute and volume
+
+Browsers let a page start audio only after a user gesture. Clicking
+**Connect** counts (enig-term starts audio then, and suspends it again after
+15 s if the board plays nothing); so does any key or tap in the terminal, the
+toolbar's **Sound** button, or the prompt that appears when a board plays
+sound before any of these happened ("This board plays sound: click to enable
+it"). While sound is not allowed yet:
+
+- **CTerm audio keeps its state.** Channels "play" on the wall clock: what
+  the board hears back (`CSI = 7 n`, `Update` reports, `Wait`) is as if
+  sound were on, and when sound starts, whatever is still in progress starts
+  where it would be by then (a looping track mid-loop), after a 50 ms fade-in.
+  Nothing is dropped.
+- **"ANSI" music is skipped** and does not hold the stream: it belongs to the
+  screen it came with, and starting it later would be out of place. The same
+  applies while the user has muted sound.
+
+The toolbar has **Sound** (mute toggle; "Enable sound" while waiting for a
+gesture) and a volume slider (hidden at phone width); Settings has **Mute
+sound**, **Volume**, **Music** (the `musicTone`) and **Clear sound cache**.
+`mute`, `volume` and `musicTone` are user settings (saved, lockable). On
+iOS, choosing to enable sound also sets `navigator.audioSession.type` to
+`playback` (when the browser has it), so the ring/silent switch does not
+mute it.
+
+### Limits
+
+Host input is untrusted; every limit drops what exceeds it (and logs it)
+without breaking the session:
+
+| Limit | Default | Config |
+|---|---|---|
+| One file stored, loaded or sent as a blob | 16 MB | `audioMaxFile` (MB) |
+| One audio APC string (base64 of the above, plus the command) | ~21.3 MB | follows `audioMaxFile` |
+| The cache in IndexedDB, all boards together (least recently used dropped) | 64 MB | `audioCache` (MB) |
+| Decoded audio held in slots and on channels | 192 MB | `audioMemory` (MB) |
+| Length of one decoded or synthesised buffer | 300 s | |
+| One decode (browser or Ogg decoder) | 15 s | |
+| Buffers per channel / on all channels (queued or playing) | 64 / 128 | |
+| One "ANSI" music string | 1022 characters (CTerm's), 120 s of sound | |
+| Holding the stream (`Wait`, foreground music) | 5 min, or 32 MB of host data meanwhile | |
+
+The APC parser and the engine are fuzzed (`npm run fuzz`, `npm run fuzz:audio`).
+
+### Formats
+
+Decoding is the browser's `decodeAudioData`. Where it cannot read Ogg Vorbis
+or Opus (Safari before 18.4, for one), the bundled decoders take over:
+libvorbis and libopus compiled to WebAssembly by
+[wasm-audio-decoders](https://github.com/eshaz/wasm-audio-decoders) (MIT; the
+libraries BSD-3-Clause), with enig-term's own Ogg page reader.
+`enig-term-ogg.js` (about 120 KB gzipped) is fetched only when a browser
+fails to decode an Ogg file itself.
+
+| Format (libsndfile pm;ps) | Chromium | Firefox | WebKit |
+|---|---|---|---|
+| WAV PCM U8, 16, 24, 32 bit, float (1;5 1;2 1;3 1;4 1;6) | yes | yes | yes |
+| FLAC 16 and 24 bit (23;2 23;3) | yes | yes | yes |
+| Ogg Vorbis (32;96) | yes | yes | yes |
+| Ogg Opus (32;100) | yes | yes | yes |
+| MP3 (35;130) | yes | yes | yes |
+| Ogg Vorbis/Opus with the bundled decoders | yes | yes | yes |
+
+Established by `test/audio.spec.ts` with generated 440 Hz files
+(`test/fixtures/audio/`) in Playwright 1.60's Chromium 148, Firefox 150 and
+WebKit 26.4 (WebKitGTK on Linux, which decodes through GStreamer; macOS and
+iOS Safari decode through Core Audio and were not available to test, hence
+the fallback). The format query answers from a decode of a tiny sample in
+the browser at hand, so it stays truthful elsewhere. Notes: Firefox and
+WebKitGTK keep MP3 encoder padding (a few tens of ms longer), Chromium keeps
+Vorbis end padding; WebKitGTK decodes a WAV whose data chunk has an odd
+length (8- or 24-bit with an odd sample count) as empty, which enig-term
+treats as a failed decode.
+
 ## Behaviour notes
 
 - **Scrollback** is cells, not pixels: lines leaving the top of the screen
@@ -478,8 +660,8 @@ follows the font in every profile).
   selection worked, 1 refused, 99 none yet); `CSI = 2 n` with the set modes
   among 6, 7, 25, 31, 32, 33, 34, 35 (`CSI = 2 ; n` when none); `CSI = 3 n` as
   `CSI = 3 ; <cell height> ; <cell width> n` (width 9 with SAUCE letter
-  spacing); `CSI = 4/5/6 n`. No answer to reports this build lacks
-  (`CSI = 7 n`, audio).
+  spacing); `CSI = 4/5/6 n`; `CSI = 7 n` and the other audio replies
+  ([Audio](#audio)).
 - **Telnet**: BINARY, SGA and ECHO accepted, TTYPE `ansi-bbs`, NAWS at
   negotiation and on every resize, NEW-ENVIRON and anything else refused.
 - **Blink**: with iCE colours off, blinking text blinks at the VGA rate
@@ -498,6 +680,15 @@ follows the font in every profile).
   and SyncTERM inline images (JXL/PPM) are off. Each kind of host request is
   answered at most 8 times a second, so an echoing host cannot loop on our
   replies (a CTDA answer echoed back parses as a new CTDA request).
+- **Holding the stream**: like a font fetch, CTerm audio can hold host
+  output: `A;Wait` until the channel is idle, foreground "ANSI" music until
+  it has played (the core stops right after them; the rest is fed when the
+  wait ends, at most 5 minutes).
+- **Font notices**: a selection of a font this terminal does not have is
+  refused as before, and the first time in a session the UI says so in a
+  toast (and `console.warn`): for Amiga fonts that the site has not installed
+  them (with a pointer to [Amiga fonts](#amiga-fonts)), for other slots which
+  font it was. Once per font (once for all Amiga fonts) per connection.
 - **Known limit**: CTerm macros (`DCS ... !z`, invoked by `CSI Pn * z`) can be
   chained so that expanding them takes exponential time inside the parser.
   That hangs the tab rather than crashing the engine, and there is no hook to
@@ -517,5 +708,7 @@ Pack and are **CC BY-SA 4.0** (`fonts/LICENSE`, `fonts/README.txt`). They are
 separate data files under their own licence, so share-alike applies to them
 only. Amiga fonts are not distributed; see [Amiga fonts](#amiga-fonts). The
 Amiga palettes are numbers taken from NComm and Term (cited in
-`src/palettes.ts`), no code. `credits.html` in `dist/` lists all of this for
+`src/palettes.ts`), no code. `enig-term-ogg.js` contains wasm-audio-decoders
+(MIT) with libvorbis, libogg and libopus (BSD-3-Clause) and puff (zlib);
+see `NOTICE`. The audio test fixtures are generated tones. `credits.html` in `dist/` lists all of this for
 users.

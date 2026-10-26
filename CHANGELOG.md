@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased: Phase 3, audio
+
+- **CTerm audio APC**, complete per the current manual's "Audio APCs"
+  (CTerm 1.332): 256 patch slots, 16 channels (0 "ANSI" music, 1 reserved),
+  `Load`/`LoadBlob`/`Synth` (all eight shapes)/`Copy`/`Queue`/`Flush`/`Volume`/
+  `Wait`/`Update`, with fades (`I=`, `O=`), loops, crossfade (`X`, equal
+  power, both audible during the overlap), per-buffer and per-channel levels
+  and pan (`V=`, `VL=`, `VR=`, dB or 0-100), dB-linear volume ramps (`T=`),
+  durations in ms, frames or periods. A Queue behind a loop ends it at the
+  pass boundary, as the manual says (SyncTERM's and IcyTerm's mixers do not).
+  Replies: `Q;libsndfile`, `Q;libsndfileFormat` (from what this browser
+  decodes), `CSI = 7 n` and `CSI = 7 ; ch n`, asynchronous idle reports,
+  `C;L` listings with MD5, `Q;JXL` (no).
+- **File cache** per board in IndexedDB (memory without it): uploads survive
+  reconnects and reloads, LRU-bounded, glob(3) listings, Clear sound cache
+  in Settings.
+- **"ANSI" music** (`CSI |`, `CSI N`, `CSI M` per `CSI = Ps M`, default mode
+  1) parsed in the core per the manual (icy_engine's own parser is off) and
+  synthesised in WebAudio: PC-speaker square by default, SyncTERM's timbre or
+  a sine (`musicTone`); foreground music holds the stream until it has
+  played, background does not.
+- **The stream can wait for audio**: the core stops right after music and
+  `A;Wait` (`Core::fed`), and the shell holds the rest (as it does for fonts).
+- **Autoplay**: audio starts on Connect, any key or tap, the Sound button or a
+  prompt; until then CTerm audio keeps its state on the wall clock and starts
+  in place when allowed; "ANSI" music meanwhile is skipped. Toolbar Sound
+  button and volume, Settings mute/volume/music voice; `mute`, `volume`,
+  `musicTone` persisted. New `sound` event; `soundState`, `enableSound()`,
+  `clearSoundCache()` on the handle.
+- **Limits** for untrusted input (file size, APC size, cache, decoded memory,
+  buffer length, decode time, buffers per channel, music length, hold time);
+  the APC paths are fuzzed (`npm run fuzz:audio`).
+- **Ogg decoders** for browsers without Ogg Vorbis/Opus in `decodeAudioData`
+  (wasm-audio-decoders, MIT; libvorbis/libopus, BSD-3-Clause), loaded only
+  when needed.
+- **dist/** adds `enig-term-audio.js` (loaded on first use, ~13 KB gzipped)
+  and `enig-term-ogg.js` (only where needed, ~120 KB gzipped).
+- **config.json v1** (compatible): `sound`, `mute`, `volume`, `musicTone`,
+  `audioCache`, `audioMaxFile`, `audioMemory`.
+- **Font notices** (Phase 2 follow-up): a board selecting an Amiga font this
+  site does not have gets a one-time, non-modal notice (and a console
+  warning) instead of nothing; other refused fonts get their own, once each.
+- Tests: ansi-bbs-utils 0.2.1's own host side drives the terminal over a real
+  WebSocket in every browser (probe, upload once across reconnects, music,
+  effects, idle, stop, heard at the expected levels), and in Node against the
+  same calls on its `Testing.FakeCTerm`; OfflineAudioContext measurements of
+  levels, pitch, fades, crossfades, ramps, loop ends and music timing; every
+  claimed format decoded in Chromium, Firefox and WebKit.
+
 ## Unreleased: Phase 2, fonts and Amiga
 
 - **No fonts in the WASM.** icy_engine is built from the pinned revision with
