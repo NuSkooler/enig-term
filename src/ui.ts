@@ -27,6 +27,10 @@ const TEMPLATE = html`
     <label>Key bar <select data-set="keyBar"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
     <label><input type="checkbox" data-set="autoReconnect"> Reconnect automatically</label>
     <label>Backspace sends <select data-set="backspace"><option value="bs">^H</option><option value="del">DEL</option></select></label>
+    <label>Look <select data-set="profile" title="Auto: PC, Amiga while the board uses an Amiga font"><option value="auto">Auto</option><option value="pc">PC</option><option value="amiga">Amiga</option></select></label>
+    <label>Amiga colours <select data-set="amigaPalette"><option value="ncomm">NComm</option><option value="term-ega">Term</option></select></label>
+    <label>Amiga aspect <select data-set="amigaAspect"><option value="pal">PAL</option><option value="ntsc">NTSC</option></select></label>
+    <a class="credits" data-credits target="_blank" rel="noopener">Credits and licences</a>
   </div>
   <div class="stage" data-stage>
     <div class="term" data-term></div>
@@ -110,6 +114,8 @@ export class Chrome {
     attach(t: Terminal): void {
         this.terminal = t;
         const o = this.opts;
+        // Next to the bundle, wherever the embedding page lives.
+        this.q<HTMLAnchorElement>('[data-credits]').href = new URL('credits.html', import.meta.url).href;
         this.q<HTMLElement>('.toolbar').hidden = !o.toolbar;
         this.q('[data-title]').textContent = o.title;
         const hostIn = this.q<HTMLInputElement>('[data-host]');

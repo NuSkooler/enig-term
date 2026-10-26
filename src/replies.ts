@@ -51,21 +51,21 @@ export type CoreEvent =
     | { t: 'req'; k: 'da' | 'da2' | 'ctda' | 'dsr' }
     | { t: 'req'; k: 'cpr'; row: number; col: number }
     | { t: 'req'; k: 'size'; rows: number; cols: number }
-    | { t: 'req'; k: 'fontstate'; result: number; slots: number[] }
+    | { t: 'req'; k: 'fontstate'; first: number; result: number; slots: number[] }
     | { t: 'req'; k: 'fontmode'; modes: number[] }
     | { t: 'req'; k: 'fontdim'; h: number; w: number }
     | { t: 'req'; k: 'ctsmrr'; n: number }
     | { t: 'req'; k: 'other'; dbg: string }
-    | { t: 'font'; slot: number; font: number; ok: boolean }
-    | { t: 'fontload'; slot: number; bytes: number; ok: boolean }
+    /** CSI Ps1 ; Ps2 SP D: slot = Ps1 (0-3), font = Ps2; reason when refused: slot | font | missing. */
+    | { t: 'font'; slot: number; font: number; ok: boolean; height: number; reason?: 'slot' | 'font' | 'missing' }
+    | { t: 'fontload'; slot: number; bytes: number; ok: boolean; height?: number; width?: number }
+    /** The screen mode's cell height changed; `missing` slots need fonts of that height. */
+    | { t: 'fontheight'; height: number; missing: number[] }
     | { t: 'bell' }
     | { t: 'link'; uri: string }
     | { t: 'title'; text: string }
     | { t: 'apc'; data: string }
     | { t: 'music'; actions: number };
-
-/** First slot available for DCS-loaded fonts (SyncTERM numbering). */
-const FIRST_LOADABLE_SLOT = 43;
 
 /**
  * TEST HOOK ONLY: a CTerm-shaped DA ("CTerm" + a version) for ENiGMA builds
@@ -98,8 +98,10 @@ export function replyFor(ev: CoreEvent, st: ReplyState = {}): string | null {
             // bansi.txt: the screen size comes back as a CPR.
             return `${CSI}${ev.rows};${ev.cols}R`;
         case 'fontstate':
-            // CSI = 1 ; pF ; pR ; pS0 ; pS1 ; pS2 ; pS3 n
-            return `${CSI}=1;${FIRST_LOADABLE_SLOT};${ev.result};${ev.slots.join(';')}n`;
+            // CSI = 1 ; pF ; pR ; pS0 ; pS1 ; pS2 ; pS3 n. pF: first DCS-loadable slot;
+            // pR: 0 = the last selection worked, 1 = it was refused (no such font
+            // at this cell height), 99 = none yet; pS0-3: the attribute slots.
+            return `${CSI}=1;${ev.first};${ev.result};${ev.slots.join(';')}n`;
         case 'fontmode':
             // "If no modes are currently set, an empty parameter will be included."
             return ev.modes.length ? `${CSI}=2;${ev.modes.join(';')}n` : `${CSI}=2;n`;

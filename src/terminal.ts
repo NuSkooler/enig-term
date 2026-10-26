@@ -2,7 +2,9 @@
 // input together. No chrome (that is ui.ts); framework-free.
 import { CRT_DEFAULTS, type CrtSettings } from './crt.ts';
 import { EngineCore, loadCore, type TrapInfo } from './core.ts';
-import { checkEndpoint, type Options } from './config.ts';
+import { AMIGA_ASPECT, checkEndpoint, type Options } from './config.ts';
+import { AMIGA_SLOTS, FontSelectScan, FontStore, modeHeight } from './fonts.ts';
+import { amigaPalette } from './palettes.ts';
 import { charsetForFont, chunk, encode, fromLatin1, latin1, type Charset } from './encoding.ts';
 import { Input } from './input.ts';
 import { checkLink } from './links.ts';
@@ -26,6 +28,8 @@ export interface TermEvents {
     /** The scrollback view moved (0 = live). */
     scroll: { offset: number; lines: number };
     selection: { text: string | null };
+    /** The look profile in effect changed (setting: the configured profile, auto/pc/amiga). */
+    profile: { profile: 'pc' | 'amiga'; setting: string };
 }
 export type TermEventName = keyof TermEvents;
 type Listener<K extends TermEventName> = (ev: TermEvents[K]) => void;
@@ -78,6 +82,18 @@ const STABLE_MS = 10_000;
 const PASTE_CHUNK = 256;
 const REPLY_BURST = 8;
 const PASTE_GAP_MS = 10;
+/** Longest the stream is held while a font the host selected is fetched. */
+const FONT_WAIT_MS = 5000;
+
+/** Directory URL (with a trailing slash) relative to the bundle. */
+function dirUrl(s: string): URL | null {
+    if (!s) return null;
+    try {
+        return new URL(s.endsWith('/') ? s : s + '/', import.meta.url);
+    } catch {
+        return null;
+    }
+}
 
 export class Terminal {
     readonly el: HTMLElement;
@@ -113,6 +129,19 @@ export class Terminal {
     private fullscreen = false;
     private readonly t0 = performance.now();
     private lastFont = 0;
+    readonly fonts: FontStore;
+    /** Host bytes held while a selected font is fetched (null: not holding). */
+    private held: Uint8Array[] | null = null;
+    private fontScan = new FontSelectScan();
+    /** The host's normal font (Ps1 0) is an Amiga one: the auto profile follows it. */
+    private hostAmiga = false;
+    /** The explicit Amiga profile selected its font itself (undone when the profile ends). */
+    private profileFont = false;
+    private localSelect = false;
+    /** The profile in effect. */
+    activeProfile: 'pc' | 'amiga' = 'pc';
+    /** Rows asked for by the config, the page or resize(); the Amiga profile may override them. */
+    private baseRows: number;
     private sel: { anchor: CellPos; head: CellPos } | null = null;
     private selPushed = 0;
     private pasteQueue: Uint8Array[] = [];
@@ -124,17 +153,31 @@ export class Terminal {
     onLocalReply: ((bytes: Uint8Array) => void) | null = null;
 
     static async create(el: HTMLElement, opts: Options, hooks: TestHooks = {}, wasmUrl?: string | URL): Promise<Terminal> {
-        await loadCore(wasmUrl);
-        return new Terminal(el, opts, hooks);
+        const fonts = new FontStore(dirUrl(opts.fonts) ?? new URL('fonts/', import.meta.url), dirUrl(opts.amigaFonts));
+        // The engine has no fonts of its own: fetch slot 0 alongside the WASM.
+        const [, f0] = await Promise.all([loadCore(wasmUrl), fonts.font(0, modeHeight(opts.rows))]);
+        const t = new Terminal(el, opts, hooks, fonts);
+        if (f0) t.core.loadFont(0, f0.name, f0.data);
+        else
+            setTimeout(
+                () => t.events.emit('notice', { level: 'error', text: `The terminal fonts could not be loaded (${fonts.pcUrl.href}); text cannot be shown.` }),
+                0,
+            );
+        t.applyProfile(true);
+        t.renderFrame(true);
+        return t;
     }
 
     private constructor(
         el: HTMLElement,
         opts: Options,
         private readonly hooks: TestHooks,
+        fonts: FontStore,
     ) {
         this.el = el;
         this.opts = { ...opts };
+        this.fonts = fonts;
+        this.baseRows = opts.rows;
         this.crtSettings = { ...CRT_DEFAULTS };
         this.core = new EngineCore({
             cols: opts.cols,
@@ -217,10 +260,21 @@ export class Terminal {
                 this.core.call(c => c.set_capture_on_clear(value as boolean), undefined);
                 break;
             case 'blink':
-                if (!value) {
-                    this.textBlinkOn = this.cursorOn = true;
-                    this.core.call(c => c.set_blink(true), undefined);
-                }
+            case 'amigaBlink':
+                this.applyBlink();
+                break;
+            case 'profile':
+                this.applyProfile();
+                break;
+            case 'amigaPalette':
+            case 'amigaIce':
+            case 'amigaRows':
+                if (this.activeProfile === 'amiga') this.applyProfile(true);
+                break;
+            case 'amigaAspect':
+                this.layout();
+                break;
+            case 'amigaCursor':
                 this.needsDraw = true;
                 break;
             case 'autoReconnect':
@@ -233,12 +287,88 @@ export class Terminal {
 
     // --- geometry ------------------------------------------------------------
 
-    /** Vertical stretch for 4:3: an 80x25 frame of this cell size fills a 4:3 screen. */
+    /**
+     * Vertical stretch of the frame. PC: an 80x25 frame of this cell size
+     * fills a 4:3 screen. Amiga: the font is an 8x8 one drawn line-doubled
+     * in 16-row cells, so each frame row is half an Amiga pixel, whose
+     * height:width is `amigaAspect` (PAL 1.875, NTSC 2.4).
+     */
     get yStretch(): number {
         if (!this.opts.aspect) return 1;
         const cw = this.core.call(c => c.cell_width(), 8);
         const ch = this.core.call(c => c.cell_height(), 16);
+        if (this.activeProfile === 'amiga') {
+            const a = this.opts.amigaAspect;
+            const px = typeof a === 'number' ? a : AMIGA_ASPECT[a] ?? AMIGA_ASPECT.pal;
+            return (px * 8) / ch;
+        }
         return ((80 * cw) / (25 * ch)) * 0.75;
+    }
+
+    /** Text blink in effect: the blink option, unless the Amiga profile turns it off. */
+    private get blinkOn(): boolean {
+        return this.opts.blink && (this.activeProfile !== 'amiga' || this.opts.amigaBlink);
+    }
+
+    private applyBlink(): void {
+        if (!this.blinkOn) {
+            this.textBlinkOn = this.cursorOn = true;
+            this.core.call(c => c.set_blink(true), undefined);
+        }
+        this.needsDraw = true;
+    }
+
+    // --- profiles ------------------------------------------------------------------
+
+    private profileWanted(): 'pc' | 'amiga' {
+        const p = this.opts.profile;
+        return p === 'auto' ? (this.hostAmiga ? 'amiga' : 'pc') : p;
+    }
+
+    /**
+     * Put the wanted profile into effect: palette, iCE gating, rows, blink,
+     * cursor and aspect. The explicit Amiga profile also selects its font
+     * (amigaFont, Topaz by default) when it is installed.
+     */
+    applyProfile(force = false): void {
+        const p = this.profileWanted();
+        const changed = p !== this.activeProfile;
+        if (!changed && !force) return;
+        this.activeProfile = p;
+        const amiga = p === 'amiga';
+        this.core.setPalette(amiga ? amigaPalette(this.opts.amigaPalette) : null);
+        this.core.setIceAllowed(!amiga || this.opts.amigaIce);
+        const rows = amiga && this.opts.amigaRows ? this.opts.amigaRows : this.baseRows;
+        if (rows !== this.core.rows) this.applySize(this.core.cols, rows);
+        this.applyBlink();
+        // The explicit Amiga look includes its font; the host's own selection
+        // (any font) is never overridden, and the PC look keeps whatever the host chose.
+        if (this.opts.profile === 'amiga' && !AMIGA_SLOTS.has(this.lastFont)) void this.selectLocalFont(this.opts.amigaFont);
+        else if (!amiga && this.profileFont) void this.selectLocalFont(0);
+        this.layout();
+        this.needsDraw = true;
+        if (changed || force) this.events.emit('profile', { profile: p, setting: this.opts.profile });
+    }
+
+    /** Select a font as if the host had (the user chose a profile that implies one). */
+    private async selectLocalFont(font: number): Promise<void> {
+        const h = this.core.modeFontHeight;
+        if (!this.core.hasFont(font)) {
+            const f = await this.fonts.font(font, h);
+            if (!f) {
+                if (AMIGA_SLOTS.has(font)) this.events.emit('notice', { level: 'info', text: 'Amiga fonts are not installed on this site; using the PC font.' });
+                return;
+            }
+            this.core.loadFont(font, f.name, f.data);
+        }
+        if (this.profileWanted() !== (AMIGA_SLOTS.has(font) ? 'amiga' : 'pc') && this.opts.profile !== 'auto') return; // changed meanwhile
+        this.localSelect = true;
+        try {
+            this.feedNow(fromLatin1(`${CSI}0;${font} D`));
+        } finally {
+            this.localSelect = false;
+        }
+        this.profileFont = AMIGA_SLOTS.has(font);
     }
 
     setFullscreen(on: boolean): void {
@@ -296,7 +426,7 @@ export class Terminal {
         if (this.destroyed) return;
         this.raf = requestAnimationFrame(this.loop);
         const now = performance.now() - this.t0;
-        if (this.opts.blink) {
+        if (this.blinkOn) {
             const text = Math.floor(now / TEXT_BLINK_MS) % 2 === 0;
             if (text !== this.textBlinkOn) {
                 this.textBlinkOn = text;
@@ -343,10 +473,10 @@ export class Terminal {
         const ch = this.core.call(c => c.cell_height(), 16);
         let cursor = null;
         const visible = this.core.call(c => c.cursor_visible(), false);
-        if (visible && this.scroll.offset === 0 && (this.cursorOn || !this.opts.blink)) {
+        if (visible && this.scroll.offset === 0 && (this.cursorOn || !this.blinkOn)) {
             const x = this.core.call(c => c.cursor_x(), 0) * cw;
             const y = this.core.call(c => c.cursor_y(), 0) * ch;
-            const shape = this.core.call(c => c.cursor_shape(), 0);
+            const shape = this.activeProfile === 'amiga' && this.opts.amigaCursor === 'block' ? 0 : this.core.call(c => c.cursor_shape(), 0);
             if (shape === 1) cursor = { x, y: y + ch - Math.max(2, ch >> 3), w: cw, h: Math.max(2, ch >> 3) };
             else if (shape === 2) cursor = { x, y, w: Math.max(1, cw >> 3), h: ch };
             else cursor = { x, y, w: cw, h: ch };
@@ -365,14 +495,78 @@ export class Terminal {
 
     // --- data in ---------------------------------------------------------------
 
-    /** Feed terminal data (already Telnet-decoded) and answer any host requests. */
+    /**
+     * Feed terminal data (already Telnet-decoded) and answer any host requests.
+     * A font selection (CSI Ps1 ; Ps2 SP D) of a font that is listed but not
+     * loaded yet holds the stream at its final byte until the font arrives
+     * (at most FONT_WAIT_MS), so the selection succeeds instead of failing.
+     */
     write(bytes: Uint8Array | string): void {
         const b = typeof bytes === 'string' ? fromLatin1(bytes) : bytes;
+        this.stats.bytesIn += b.length;
+        if (this.held) this.held.push(b.slice());
+        else this.feedChunk(b);
+    }
+
+    /** True while host output is held for a font fetch (tests). */
+    get holding(): boolean {
+        return this.held !== null;
+    }
+
+    private feedChunk(b: Uint8Array): void {
+        for (let i = 0; i < b.length; i++) {
+            const sel = this.fontScan.step(b[i]);
+            if (!sel) continue;
+            const font = sel[1];
+            const h = this.core.modeFontHeight;
+            if (font > 255 || this.core.hasFont(font) || !this.fonts.mayHave(font, h)) continue;
+            this.feedNow(b.subarray(0, i));
+            this.held = [b.slice(i)];
+            void this.fetchThenResume(font, h);
+            return;
+        }
+        this.feedNow(b);
+    }
+
+    private feedNow(b: Uint8Array): void {
+        if (!b.length) return;
         const t = performance.now();
         const events = this.core.feed(b);
         this.stats.feedMs += performance.now() - t;
-        this.stats.bytesIn += b.length;
         for (const ev of events) this.onEvent(ev);
+    }
+
+    private async fetchThenResume(font: number, height: number): Promise<void> {
+        let timer = 0;
+        const timeout = new Promise<null>(r => (timer = window.setTimeout(() => r(null), FONT_WAIT_MS)));
+        const f = await Promise.race([this.fonts.font(font, height), timeout]);
+        clearTimeout(timer);
+        if (this.destroyed || !this.held) return;
+        if (f) {
+            try {
+                this.core.loadFont(font, f.name, f.data);
+                this.logLine(`font ${font} loaded (${f.data.length} B)`);
+            } catch (e) {
+                this.logLine(`font ${font} rejected: ${(e as Error)?.message ?? e}`);
+            }
+        } else this.logLine(`font ${font} not available at ${height} px`);
+        const q = this.held;
+        this.held = null;
+        // feedChunk may start holding again (another font); the rest then queues.
+        for (const c of q) {
+            const again = this.held as Uint8Array[] | null;
+            if (again) again.push(c);
+            else this.feedChunk(c);
+        }
+    }
+
+    /** Load the fonts a cell height change left without one. */
+    private async loadMissing(height: number, slots: number[]): Promise<void> {
+        for (const s of slots) {
+            const f = await this.fonts.font(s, height);
+            if (f && !this.destroyed && this.core.modeFontHeight === height) this.core.loadFont(s, f.name, f.data);
+        }
+        this.needsDraw = true;
     }
 
     private logLine(s: string): void {
@@ -397,12 +591,22 @@ export class Terminal {
                 break;
             }
             case 'font':
-                this.logLine(`font ${ev.font} ok=${ev.ok}`);
-                if (ev.ok) {
+                this.logLine(`font ${ev.slot};${ev.font} ok=${ev.ok}${ev.reason ? ` (${ev.reason})` : ''}`);
+                if (ev.ok && ev.slot === 0) {
+                    // The normal font sets the charset of typed text and the auto profile.
                     this.lastFont = ev.font;
                     this.charset = charsetForFont(ev.font);
+                    if (!this.localSelect) {
+                        this.hostAmiga = AMIGA_SLOTS.has(ev.font);
+                        this.profileFont = false;
+                        this.applyProfile();
+                    }
                 }
                 this.layout();
+                break;
+            case 'fontheight':
+                this.logLine(`cell height ${ev.height}, loading ${ev.missing.join(',') || 'nothing'}`);
+                void this.loadMissing(ev.height, ev.missing);
                 break;
             case 'bell':
                 this.events.emit('bell', {});
@@ -801,7 +1005,12 @@ export class Terminal {
             this.core.call(c => c.reset(), undefined);
             this.charset = 'cp437';
             this.lastFont = 0;
+            this.hostAmiga = false;
+            this.profileFont = false;
+            this.held = null;
+            this.fontScan = new FontSelectScan();
             this.scroll.toLive();
+            this.applyProfile(this.opts.profile === 'amiga');
         }
         const telnet = new TelnetClient({
             termType: this.opts.termType,
@@ -888,11 +1097,16 @@ export class Terminal {
         return this.endpoint ?? this.opts.endpoint;
     }
 
-    /** Change the terminal geometry and tell the host (NAWS). */
+    /** Change the terminal geometry and tell the host (NAWS). The Amiga profile's amigaRows, when set, wins while it is active. */
     resize(cols: number, rows: number): void {
-        this.core.resize(cols, rows);
         this.opts.cols = cols;
         this.opts.rows = rows;
+        this.baseRows = rows;
+        this.applySize(cols, this.activeProfile === 'amiga' && this.opts.amigaRows ? this.opts.amigaRows : rows);
+    }
+
+    private applySize(cols: number, rows: number): void {
+        this.core.resize(cols, rows);
         const naws = this.telnet?.buildResize();
         if (naws && this.ws?.readyState === WebSocket.OPEN) this.ws.send(naws);
         this.clearSelection();
@@ -907,7 +1121,7 @@ export class Terminal {
     }
 
     loadFont(slot: number, name: string, data: Uint8Array): string {
-        const r = this.core.call(c => c.load_font(slot, name, data), '');
+        const r = this.core.loadFont(slot, name, data);
         this.renderFrame(true);
         return r;
     }

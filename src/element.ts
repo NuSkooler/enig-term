@@ -6,7 +6,8 @@
 //   config        URL of a config.json (relative to the page)
 //   endpoint      wss:// URL;  lock-endpoint  the user cannot change it
 //   auto-connect  connect on load
-//   title, cols, rows, profile (pc|amiga), scrollback
+//   title, cols, rows, profile (auto|pc|amiga), scrollback
+//   fonts, amiga-fonts (font directories), amiga-palette, amiga-aspect, amiga-rows
 //   crt, aspect   booleans: present / "on" / "true" = on, "off" / "false" = off
 //   scale         fit | integer;   keybar  auto | on | off
 //   toolbar       "off" hides the toolbar;  persist  "off" stops saving user settings
@@ -38,9 +39,14 @@ const ATTRS: Record<string, string> = {
     blink: 'blink',
     'auto-reconnect': 'autoReconnect',
     backspace: 'backspace',
+    fonts: 'fonts',
+    'amiga-fonts': 'amigaFonts',
+    'amiga-palette': 'amigaPalette',
+    'amiga-aspect': 'amigaAspect',
+    'amiga-rows': 'amigaRows',
 };
-const RUNTIME = new Set(['endpoint', 'title', 'crt', 'aspect', 'scale', 'keyBar', 'toolbar', 'autoReconnect', 'backspace', 'blink', 'scrollback']);
-const EVENTS: TermEventName[] = ['state', 'title', 'bell', 'link', 'notice', 'recovered', 'scroll', 'selection'];
+const RUNTIME = new Set(['endpoint', 'title', 'crt', 'aspect', 'scale', 'keyBar', 'toolbar', 'autoReconnect', 'backspace', 'blink', 'scrollback', 'profile', 'amigaPalette', 'amigaAspect', 'amigaRows']);
+const EVENTS: TermEventName[] = ['state', 'title', 'bell', 'link', 'notice', 'recovered', 'scroll', 'selection', 'profile'];
 
 export class EnigTermElement extends HTMLElement {
     static observedAttributes = Object.keys(ATTRS);

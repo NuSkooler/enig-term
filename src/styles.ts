@@ -25,6 +25,7 @@ button:focus-visible, select:focus-visible, .host:focus-visible { outline: 2px s
 .settings { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 8px 12px; background: var(--et-panel); border-bottom: 1px solid var(--et-edge); font-size: 13px; }
 .settings[hidden] { display: none; }
 .settings label { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.settings .credits { color: inherit; opacity: .8; align-self: center; }
 .stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; justify-content: center; align-items: flex-start; padding: 8px 0; overflow: hidden; }
 .stage.bell { animation: et-bell .15s ease-out; }
 @keyframes et-bell { from { background: #333; } to { background: transparent; } }

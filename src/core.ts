@@ -130,6 +130,10 @@ export class EngineCore {
     private queue: Uint8Array[] = [];
     private queued = 0;
     private lastMessage = '';
+    /** Fonts, palette and iCE gating given to the core, re-applied to a rebuilt one. */
+    private fonts = new Map<string, { slot: number; name: string; data: Uint8Array }>();
+    private palette: Uint8Array | null = null;
+    private iceAllowed = true;
     onTrap: ((info: TrapInfo) => void) | null = null;
     onRebuilt: (() => void) | null = null;
     /** Events produced while replaying queued bytes after a rebuild. */
@@ -154,6 +158,42 @@ export class EngineCore {
         this.core.set_scrollback_lines(s.scrollback);
         this.core.set_capture_on_clear(s.scrollbackOnClear);
         if (s.debugPanic) this.core.debug_passthrough_sync(true);
+        for (const f of this.fonts.values()) {
+            try {
+                this.core.load_font(f.slot, f.name, f.data);
+            } catch {
+                /* it loaded before; nothing to do if it no longer does */
+            }
+        }
+        if (this.palette) this.core.set_palette(this.palette);
+        if (!this.iceAllowed) this.core.set_ice_allowed(false);
+    }
+
+    /** Load a font (kept for rebuilds). Returns "WxH", or throws the core's error. */
+    loadFont(slot: number, name: string, data: Uint8Array): string {
+        if (this.dead) return '';
+        const r = this.call(c => c.load_font(slot, name, data), '');
+        if (r) this.fonts.set(`${slot}:${r.split('x')[1]}`, { slot, name, data });
+        return r;
+    }
+
+    hasFont(slot: number): boolean {
+        return this.call(c => c.has_font(slot), false);
+    }
+
+    get modeFontHeight(): number {
+        return this.call(c => c.mode_font_height(), 16);
+    }
+
+    /** Profile palette (48 bytes, ANSI order), or null for the VGA palette. */
+    setPalette(rgb: Uint8Array | null): void {
+        this.palette = rgb;
+        this.call(c => (rgb ? c.set_palette(rgb) : c.clear_palette()), undefined);
+    }
+
+    setIceAllowed(on: boolean): void {
+        this.iceAllowed = on;
+        this.call(c => c.set_ice_allowed(on), undefined);
     }
 
     /** Run `fn` on the core; a trap starts recovery and yields `fallback`. */

@@ -11,8 +11,10 @@
 // changing the endpoint.
 
 import { DEFAULT_LINK_SCHEMES } from './links.ts';
+import { AMIGA_PALETTE_NAMES, type AmigaPaletteName } from './palettes.ts';
 
-export type Profile = 'pc' | 'amiga';
+/** "auto": PC, switching to Amiga while the host's font is an Amiga one (SyncTERM 37-42). */
+export type Profile = 'auto' | 'pc' | 'amiga';
 export type KeyBarMode = 'auto' | 'on' | 'off';
 export type ScaleMode = 'fit' | 'integer';
 
@@ -30,8 +32,30 @@ export interface Options {
     autoConnect: boolean;
     cols: number;
     rows: number;
-    /** Font/aspect profile. Phase 1 implements "pc"; "amiga" is reserved. */
+    /**
+     * Look profile: "pc", "amiga" (Ami/X: Amiga palette, aspect, cursor and
+     * optional geometry), or "auto" (PC, Amiga while the host's normal font
+     * is an Amiga font). "pc" and "amiga" lock it.
+     */
     profile: Profile;
+    /** Fonts directory (its manifest.json), relative to the bundle. */
+    fonts: string;
+    /** Amiga fonts directory, relative to the bundle; "" = none installed. */
+    amigaFonts: string;
+    /** Amiga profile palette. */
+    amigaPalette: AmigaPaletteName;
+    /** Amiga profile pixel aspect (height:width of a hires pixel): "pal" 1.875, "ntsc" 2.4, or a number 1-3. */
+    amigaAspect: 'pal' | 'ntsc' | number;
+    /** Amiga profile rows (e.g. 24, 25 or 32; NAWS follows), or null to keep `rows`. */
+    amigaRows: number | null;
+    /** Font the explicit Amiga profile selects (SyncTERM 37-42; 42 = Topaz), when installed. */
+    amigaFont: number;
+    /** Amiga profile honours the host's CSI ? 33 h (iCE colours). */
+    amigaIce: boolean;
+    /** Amiga profile blinks text (SGR 5). */
+    amigaBlink: boolean;
+    /** Amiga profile cursor: "block", or "host" (whatever the host sets). */
+    amigaCursor: 'block' | 'host';
     /** 4:3 aspect correction. */
     aspect: boolean;
     /** CRT effect. */
@@ -78,7 +102,16 @@ export const DEFAULTS: Readonly<Options> = Object.freeze({
     autoConnect: false,
     cols: 80,
     rows: 25,
-    profile: 'pc',
+    profile: 'auto',
+    fonts: 'fonts/',
+    amigaFonts: 'fonts/amiga/',
+    amigaPalette: 'ncomm',
+    amigaAspect: 'pal',
+    amigaRows: null,
+    amigaFont: 42,
+    amigaIce: false,
+    amigaBlink: true,
+    amigaCursor: 'block',
     aspect: true,
     crt: false,
     scale: 'fit',
@@ -100,11 +133,14 @@ export const DEFAULTS: Readonly<Options> = Object.freeze({
 }) as Options;
 
 /** Settings a user can change from the UI (and that are persisted). */
-export const USER_KEYS = ['aspect', 'crt', 'scale', 'keyBar', 'autoReconnect', 'backspace', 'sharp'] as const;
+export const USER_KEYS = ['aspect', 'crt', 'scale', 'keyBar', 'autoReconnect', 'backspace', 'sharp', 'profile', 'amigaPalette', 'amigaAspect'] as const;
 export type UserKey = (typeof USER_KEYS)[number];
 export type UserSettings = Partial<Pick<Options, UserKey>>;
 
-const BOOL_KEYS = ['lockEndpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'scrollbackOnClear', 'autoReconnect', 'blink', 'allowInsecure', 'urlParams', 'persist', 'toolbar'] as const;
+const BOOL_KEYS = ['lockEndpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'scrollbackOnClear', 'autoReconnect', 'blink', 'allowInsecure', 'urlParams', 'persist', 'toolbar', 'amigaIce', 'amigaBlink'] as const;
+
+/** Pixel aspect (height:width) of the Amiga presets: PAL hires 640x256 and NTSC 640x200 shown at 4:3. */
+export const AMIGA_ASPECT = { pal: 1.875, ntsc: 2.4 } as const;
 
 /**
  * Validate a partial options object (config.json, attributes, JS options):
@@ -137,6 +173,32 @@ export function sanitize(src: Record<string, unknown> | null | undefined, warn: 
         else if (typeof v === 'string') o.endpoint = v.trim();
         else bad('endpoint');
     }
+    for (const k of ['fonts', 'amigaFonts'] as const) {
+        if (!(k in src)) continue;
+        const v = src[k];
+        if (typeof v === 'string' && v.length <= 1000) o[k] = v.trim();
+        else if (k === 'amigaFonts' && (v === false || v === null)) o[k] = '';
+        else bad(k);
+    }
+    if ('amigaRows' in src) {
+        const v = src.amigaRows;
+        const n = Number(v);
+        if (v === null || v === '' || v === 'off') o.amigaRows = null;
+        else if (Number.isInteger(n) && n >= 10 && n <= 255) o.amigaRows = n;
+        else bad('amigaRows');
+    }
+    if ('amigaFont' in src) {
+        const n = Number(src.amigaFont);
+        if (Number.isInteger(n) && n >= 37 && n <= 42) o.amigaFont = n;
+        else bad('amigaFont');
+    }
+    if ('amigaAspect' in src) {
+        const v = src.amigaAspect;
+        const n = Number(v);
+        if (v === 'pal' || v === 'ntsc') o.amigaAspect = v;
+        else if (v !== '' && v !== null && Number.isFinite(n) && n >= 1 && n <= 3) o.amigaAspect = n;
+        else bad('amigaAspect');
+    }
     for (const k of ['title', 'termType'] as const) {
         if (!(k in src)) continue;
         if (typeof src[k] === 'string') o[k] = String(src[k]).slice(0, 200);
@@ -159,7 +221,9 @@ export function sanitize(src: Record<string, unknown> | null | undefined, warn: 
         else if (k === 'keyBar' && typeof v === 'boolean') o[k] = v ? 'on' : 'off';
         else bad(k);
     };
-    oneOf('profile', ['pc', 'amiga']);
+    oneOf('profile', ['auto', 'pc', 'amiga']);
+    oneOf('amigaPalette', AMIGA_PALETTE_NAMES);
+    oneOf('amigaCursor', ['block', 'host']);
     oneOf('keyBar', ['auto', 'on', 'off']);
     oneOf('scale', ['fit', 'integer']);
     oneOf('backspace', ['bs', 'del']);
@@ -180,7 +244,7 @@ export function fromUrlParams(q: URLSearchParams): { opts: Record<string, unknow
     const map: Record<string, string> = { connect: 'autoConnect', keys: 'keyBar' };
     for (const [k, v] of q) {
         const key = map[k] ?? k;
-        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect'].includes(key)) opts[key] = v;
+        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect', 'amigaPalette', 'amigaAspect', 'amigaRows'].includes(key)) opts[key] = v;
     }
     const hooks: Record<string, string> = {};
     for (const k of ['naws', 'debugDa', 'debugPanic']) {

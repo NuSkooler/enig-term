@@ -22,6 +22,9 @@ const TYPES = {
     '.map': 'application/json',
     '.ans': 'application/octet-stream',
     '.png': 'image/png',
+    '.psf': 'application/octet-stream',
+    '.txt': 'text/plain; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
 };
 
 const server = http.createServer((req, res) => {
@@ -52,6 +55,12 @@ const server = http.createServer((req, res) => {
     if (p === '/config.json') {
         file = process.env.ENIG_TERM_DEV_CONFIG ?? path.join(root, 'dev-config.json');
     } else {
+        // Development only: Amiga fonts installed for tests (npm run fonts:amiga)
+        // stand in for an operator's dist/fonts/amiga/.
+        if (p.startsWith('/fonts/amiga/') && !fs.existsSync(path.join(root, 'dist', 'fonts', 'amiga')) && fs.existsSync(path.join(root, 'test', 'amiga-fonts'))) {
+            base = path.join(root, 'test', 'amiga-fonts');
+            p = p.slice('/fonts/amiga'.length);
+        }
         if (p.startsWith('/fixtures/')) {
             base = path.join(root, 'test', 'fixtures');
             p = p.slice('/fixtures'.length);
