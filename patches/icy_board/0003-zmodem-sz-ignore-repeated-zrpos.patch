@@ -1,5 +1,5 @@
 diff --git a/crates/icy_net/src/protocol/zmodem/sz.rs b/crates/icy_net/src/protocol/zmodem/sz.rs
-index 4e2592a..f63a9bb 100644
+index 4e2592a..1b5e6ee 100644
 --- a/crates/icy_net/src/protocol/zmodem/sz.rs
 +++ b/crates/icy_net/src/protocol/zmodem/sz.rs
 @@ -1,4 +1,5 @@
@@ -33,7 +33,16 @@ index 4e2592a..f63a9bb 100644
          }
      }
  
-@@ -427,6 +430,18 @@ impl Sz {
+@@ -110,6 +113,8 @@ impl Sz {
+             ));
+ 
+             self.cur_file = next_file.clone();
++            // A ZRPOS for offset 0 of this file is not a repeat of one for the last file.
++            self.last_rpos = None;
+             let reader = SourceReader::open(&next_file)?;
+             self.cur_buf = Some(reader);
+             Ok(true)
+@@ -427,6 +432,18 @@ impl Sz {
  
              ZFrameType::RPos => {
                  let new_pos = res.number() as u64;
