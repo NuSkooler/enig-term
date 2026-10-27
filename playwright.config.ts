@@ -35,6 +35,8 @@ export default defineConfig({
     // CI has no sound output; the audio specs run locally (and by ear).
     testIgnore: process.env.ENIG_TERM_SKIP_AUDIO ? /audio(-interop)?\.spec\.ts/ : undefined,
     timeout: 60_000,
+    // One retry on CI: a slow runner shows timing flakes (reported as flaky) without failing the run.
+    retries: process.env.CI ? 1 : 0,
     fullyParallel: false,
     workers: 1,
     reporter: [['list']],

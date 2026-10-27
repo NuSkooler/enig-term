@@ -128,7 +128,8 @@ test('paste: encoded like typing, CR line ends, sent in chunks', async ({ page }
         // A script-made DataTransfer is empty in Firefox; stand in for the real one.
         Object.defineProperty(ev, 'clipboardData', { value: { getData: (t: string) => (t === 'text/plain' ? text : '') } });
         t.input.textarea.dispatchEvent(ev);
-        await new Promise(r => setTimeout(r, 200));
+        // Chunks are paced; wait for all of them (a slow CI runner needs more than a fixed 200 ms).
+        for (let i = 0; i < 100 && sizes.reduce((n, x) => n + x, 0) < 11 + 600; i++) await new Promise(r => setTimeout(r, 50));
         return sizes;
     });
     const got = await sent(page);
