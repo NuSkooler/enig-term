@@ -1,5 +1,27 @@
 # Building and testing
 
+## Download a release
+
+Building is not needed to run enig-term. Each release on the
+[Releases page](https://github.com/NuSkooler/enig-term/releases) has the
+built `dist/` as `enig-term-<version>.zip` and `enig-term-<version>.tar.gz`,
+each with one top-level folder, `enig-term-<version>/`, and a `SHA256SUMS`.
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS
+unzip enig-term-0.1.0.zip                 # or: tar xzf enig-term-0.1.0.tar.gz
+mkdir -p /path/to/enigma-bbs/ws-term      # or a directory under any web root
+cp -a enig-term-0.1.0/. /path/to/enigma-bbs/ws-term/
+cd /path/to/enigma-bbs/ws-term
+node tools/fetch-amiga-fonts.mjs          # optional: the Amiga fonts (Node 18+)
+```
+
+`ws-term/` in the ENiGMA½ directory is where ENiGMA½ looks by default
+(`contentServers.web.wsTerm.root`). The archive holds exactly the
+[dist/ layout](#dist-layout): no `config.json` and no Amiga fonts.
+
+The rest of this page is about building from source.
+
 ## Toolchain
 
 - Node 22 (`mise.toml`; with mise, run commands through `mise exec --`).
@@ -135,7 +157,32 @@ with pinned tools (Rust 1.96.0, wasm-bindgen-cli 0.2.129, binaryen
 version_133, Node 22). It then runs the typecheck, the Node unit tests and
 Playwright on Chromium, Firefox and Pixel 7. WebKit runs as a non-blocking
 step. lrzsz is installed there; sexyz is not packaged, so its tests skip.
-`dist/` is uploaded as the `enig-term-dist` artifact.
+`dist/` is uploaded as the `enig-term-dist` artifact. The pins and the
+setup steps live in `.github/actions/setup-build/action.yml`, which the
+release workflow shares.
+
+### Releases
+
+Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`. It fails unless
+the tag is `v` plus the `package.json` version. It builds with the same
+toolchain as CI and runs the Node unit tests (Playwright is left to CI on
+`main`). Then `scripts/package-release.sh` writes `enig-term-X.Y.Z.zip`,
+`enig-term-X.Y.Z.tar.gz` and `SHA256SUMS`, and checks the archives: the
+required files are there, and there is no `fonts/amiga/` and no
+`config.json`. The release notes are the `## X.Y.Z - <date>` section of
+`CHANGELOG.md`.
+
+To cut a release: set the version in `package.json`, head the CHANGELOG
+section `## X.Y.Z - YYYY-MM-DD`, commit, then tag and push the tag. To check
+the packaging locally first, after `npm run build`:
+
+```sh
+scripts/package-release.sh "$(node -p 'require("./package.json").version')" build/release
+```
+
+It refuses a `dist/` that holds `fonts/amiga/`, so run it before installing
+the Amiga fonts into `dist/`, or pass a copy without them as a third
+argument.
 
 ### What the tests cover
 

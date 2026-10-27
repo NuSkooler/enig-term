@@ -5,8 +5,8 @@ A browser terminal for ANSI-BBS boards. The emulation is
 Around it is a small TypeScript shell with no framework, and the screen is
 drawn with WebGL2 (with a 2D canvas fallback).
 
-enig-term is under active development: version 0.1.0, not released yet. See
-[CHANGELOG.md](CHANGELOG.md) for what is done, and [SPIKE.md](SPIKE.md) for
+enig-term is under active development; the current release is 0.1.0. See
+[CHANGELOG.md](CHANGELOG.md) for what is in it, and [SPIKE.md](SPIKE.md) for
 the measurements behind the design.
 
 ## Features
@@ -25,6 +25,35 @@ the measurements behind the design.
 
 ## Using it
 
+### Download a release
+
+Each release on the
+[Releases page](https://github.com/NuSkooler/enig-term/releases) has a
+prebuilt `enig-term-<version>.zip` (and `.tar.gz`) and a `SHA256SUMS`. No
+Rust or Node is needed to install it.
+
+```sh
+sha256sum -c --ignore-missing SHA256SUMS
+unzip enig-term-0.1.0.zip                 # creates enig-term-0.1.0/
+mkdir -p /path/to/enigma-bbs/ws-term
+cp -a enig-term-0.1.0/. /path/to/enigma-bbs/ws-term/
+```
+
+That installs it where ENiGMA½ looks by default (`ws-term/` in the ENiGMA½
+directory, `contentServers.web.wsTerm.root`). For a plain web server, copy
+the same files into a directory under its web root instead. Copying over an
+older install keeps an installed `fonts/amiga/`.
+
+Optionally, install the Amiga fonts (Node 18 or later; read
+[Amiga fonts](docs/fonts.md#amiga-fonts) first):
+
+```sh
+cd /path/to/enigma-bbs/ws-term
+node tools/fetch-amiga-fonts.mjs
+```
+
+To build it yourself instead, see [Building](#building-from-source).
+
 ### With ENiGMA½
 
 ENiGMA½ serves enig-term at `/_enig/ws-term/` and writes its `config.json`
@@ -34,8 +63,8 @@ in the ENiGMA½ docs.
 
 ### Standalone
 
-Build it (below) and serve `dist/` from any web server. Put a `config.json`
-next to `index.html`:
+Serve the unpacked release (or a `dist/` you built) from any web server. Put
+a `config.json` next to `index.html`:
 
 ```json
 {
@@ -74,9 +103,9 @@ The other files in `dist/` are found relative to `enig-term.js`, so it can be
 served from any path. See [Embedding](docs/embedding.md) for the attributes,
 the API and events.
 
-## Building
+## Building from source
 
-You need Node 22, Rust stable with the `wasm32-unknown-unknown` target, and
+Most operators should use a release. To build, you need Node 22, Rust stable with the `wasm32-unknown-unknown` target, and
 `wasm-bindgen-cli` 0.2.129. binaryen's `wasm-opt` is optional.
 
 ```sh
@@ -92,8 +121,9 @@ icy_tools, the tests and the `dist/` layout.
 
 ## Documentation
 
-- [Building and testing](docs/building.md): toolchain, patched icy_tools,
-  tests, CI, the development server, `dist/` layout
+- [Building and testing](docs/building.md): installing a release, toolchain,
+  patched icy_tools, tests, CI, releases, the development server, `dist/`
+  layout
 - [Configuration](docs/configuration.md): the standalone page, `config.json`,
   precedence, user settings
 - [Embedding](docs/embedding.md): the `<enig-term>` element, `mount()`, events
