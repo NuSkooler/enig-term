@@ -329,3 +329,76 @@ test('receiving: the board leaves right after a file; the header answering its e
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+// A hand-made ZModem sender (no peer needed): ZRQINIT, then per file ZFILE
+// (name, announced size), ZDATA and the data in 1 KB subpackets, ZEOF; ZFIN.
+function craftedSender(files) {
+    const ZDLE = 0x18;
+    const crc16 = (b, c = 0) => {
+        for (const x of b) {
+            c ^= x << 8;
+            for (let i = 0; i < 8; i++) c = c & 0x8000 ? ((c << 1) ^ 0x1021) & 0xffff : (c << 1) & 0xffff;
+        }
+        return c;
+    };
+    const ESCAPED = new Set([0x18, 0x10, 0x90, 0x11, 0x91, 0x13, 0x93]);
+    const esc = b => b.flatMap(x => (ESCAPED.has(x) ? [ZDLE, x ^ 0x40] : [x]));
+    const pos4 = n => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+    const hexHdr = (type, p) => {
+        const h = [type, ...p];
+        const c = crc16(h);
+        return [...Buffer.from(`**\x18B${Buffer.from([...h, c >> 8, c & 0xff]).toString('hex')}\r\n\x11`, 'latin1')];
+    };
+    const binHdr = (type, p) => {
+        const h = [type, ...p];
+        const c = crc16(h);
+        return [0x2a, ZDLE, 0x41, ...esc([...h, c >> 8, c & 0xff])];
+    };
+    const sub = (data, end) => {
+        const c = crc16([...data, end]);
+        return [...esc([...data]), ZDLE, end, ...esc([c >> 8, c & 0xff])];
+    };
+    const chunks = [hexHdr(0, [0, 0, 0, 0])];
+    for (const { name, announce, total } of files) {
+        chunks.push([...binHdr(4, [0, 0, 0, 0]), ...sub([...Buffer.from(`${name}\0${announce}\0`)], 0x6b)], binHdr(10, pos4(0)));
+        const block = new Uint8Array(1024).fill(0x42);
+        for (let sent = 0; sent < total; sent += 1024) chunks.push(sub(block.subarray(0, Math.min(1024, total - sent)), sent + 1024 >= total ? 0x68 : 0x69));
+        chunks.push(hexHdr(11, pos4(total)));
+    }
+    chunks.push(hexHdr(8, [0, 0, 0, 0]), [0x4f, 0x4f]);
+    return chunks.map(c => new Uint8Array(c));
+}
+
+async function crafted(files, maxBytes) {
+    let delivered = 0;
+    let result = null;
+    const sent = [];
+    const ends = [];
+    const e = new ZmodemEngine('receive', [], b => sent.push(...b), { fileStart: () => {}, data: c => (delivered += c.length), progress: () => {}, fileEnd: ok => ends.push(ok), done: r => (result = r) }, { now, maxBytes });
+    for (const c of craftedSender(files)) e.feed(c);
+    for (let i = 0; i < 50 && !result; i++) {
+        e.tick();
+        await new Promise(r => setTimeout(r, 10));
+    }
+    return { delivered, result, ends, sent };
+}
+
+test('receiving: a file that runs past its announced size, or past maxBytes, is stopped', async () => {
+    // Announced 1000 bytes, sends 5 MB: stopped a subpacket or so past 1000.
+    const a = await crafted([{ name: 'readme.txt', announce: '1000', total: 5 << 20 }], 0);
+    assert.equal(a.result?.ok, false);
+    assert.match(a.result.error, /more than the 1000 bytes it announced/);
+    assert.ok(a.delivered <= 1000 + 8192, `delivered ${a.delivered}`);
+    assert.deepEqual(a.ends, [false]);
+    // Announced within maxBytes, sent past it: stopped at the limit.
+    const b = await crafted([{ name: 'readme.txt', announce: '99000', total: 5 << 20 }], 100_000);
+    assert.equal(b.result?.ok, false);
+    assert.match(b.result.error, /larger than this terminal accepts/);
+    assert.ok(b.delivered <= 100_000, `delivered ${b.delivered}`);
+    // Either way the abort goes out to the board.
+    assert.ok(Buffer.from(a.sent).includes(Buffer.from([0x18, 0x18, 0x18, 0x18, 0x18])));
+    // An honest file of the same shape still arrives.
+    const c = await crafted([{ name: 'ok.bin', announce: '3000', total: 3000 }], 100_000);
+    assert.equal(c.result?.ok, true, c.result?.error);
+    assert.equal(c.delivered, 3000);
+});

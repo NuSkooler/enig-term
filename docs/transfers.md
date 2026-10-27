@@ -39,8 +39,11 @@ instead (Files → "Save into a folder…", asked once per page). Files are then
 written as they arrive, with no size limit. Otherwise a file is kept as Blobs
 (4 MB parts, which a browser may move to disk) until it is complete, and one
 larger than `transferMaxFile` (512 MB) is refused: ZModem skips just that
-file, X/YModem stop. A file that ends short of the size the board announced
-(YModem's header, ZModem's ZFILE) is reported incomplete and not saved.
+file, X/YModem stop. The limit holds for the bytes that actually arrive too:
+a ZModem sender that announces a small file and sends more is stopped once it
+passes `transferMaxFile`, or the announced size by more than 8 KB. A file that
+ends short of the size the board announced (YModem's header, ZModem's ZFILE)
+is reported incomplete and not saved.
 
 ## Uploading
 

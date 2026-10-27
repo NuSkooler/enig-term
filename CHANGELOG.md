@@ -9,6 +9,10 @@
 - The URL can no longer set `zmodemDetect`, `mute` or `volume`, and the
   `debugDa` and `debugPanic` test hooks are no longer URL parameters (tests
   set `window.__enigTermTestHooks` instead).
+- A ZModem download is stopped once the bytes received pass
+  `transferMaxFile`, or the size the board announced by more than 8 KB.
+  Only the announced size was checked, so a board could announce a small
+  file and send an unbounded one into browser memory.
 
 ## 0.1.1 - 2026-10-27
 
