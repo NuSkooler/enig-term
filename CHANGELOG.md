@@ -13,6 +13,9 @@
 - Nested CTerm macros expand at most 4 MB of macro text per top-level
   invocation (icy_tools patch 0002, upstream PR mkrueger/icy_tools#197).
   About 100 bytes of macros that invoke each other hung the tab for good.
+- A screen keeps at most 64 MB of decoded sixel images: a new image evicts
+  the oldest, and one larger than that alone is dropped. About 140 KB of
+  sixel grew the engine's memory to about 3.8 GB and trapped it.
 
 ## 0.1.1 - 2026-10-27
 

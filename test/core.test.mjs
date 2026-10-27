@@ -440,3 +440,15 @@ test('nested CTerm macros expand within a budget per top-level invocation (patch
     c.feed(bytes(`${ESC}P4;0;1!z!3;${hex(`${ESC}[3*z`)};${ST}${CSI}H${CSI}2J${CSI}4*z`));
     assert.equal(c.cursor_x(), 3);
 });
+
+test('decoded sixel images on a screen stay within a budget (oldest evicted)', async () => {
+    const { Core: Fresh, memory: mem } = await loadCore({ fresh: true });
+    const c = new Fresh(80, 25, 'ansi');
+    // 4000 x 1200 pixels, 19.2 MB of RGBA each, from about 1.6 KB of sixel.
+    const one = `${ESC}Pq#0!4000~${'-!4000~'.repeat(199)}${ST}`;
+    c.feed(bytes(`${CSI}H${one}`));
+    const before = mem.buffer.byteLength;
+    for (let i = 1; i < 20; i++) c.feed(bytes(`${CSI}${(i % 20) + 1};${(i % 70) + 1}H${one}`));
+    const grew = (mem.buffer.byteLength - before) / 2 ** 20;
+    assert.ok(grew < 160, `WASM memory grew ${grew.toFixed(0)} MB for 20 images of 19.2 MB`);
+});

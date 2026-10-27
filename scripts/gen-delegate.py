@@ -11,7 +11,8 @@ import re, sys, pathlib
 src = pathlib.Path(sys.argv[1]) / 'crates/icy_engine/src/text_buffer/text_screen.rs'
 out = pathlib.Path(__file__).resolve().parent.parent / 'crates/enig-term-core/src/delegate.rs'
 OVERRIDDEN = {'scroll_up', 'scroll_down', 'clear_screen', 'print_char', 'set_char',
-              'as_editable', 'as_any_mut', 'clear_scrollback', 'scroll_left', 'scroll_right'}
+              'as_editable', 'as_any_mut', 'clear_scrollback', 'scroll_left', 'scroll_right',
+              'add_sixel'}
 
 text = src.read_text().splitlines()
 blocks, cur = {}, None
@@ -44,7 +45,7 @@ use std::sync::Arc;
 
 use icy_engine::{
     AttributedChar, BitFont, Caret, EditableScreen, HyperLink, IceMode, Layer, Line, MouseField, Palette, Position, Rectangle, RenderOptions, Result,
-    SaveOptions, SavedCaretState, Screen, Selection, Sixel, Size, TerminalState, TextPane,
+    SaveOptions, SavedCaretState, Screen, Selection, Size, TerminalState, TextPane,
 };
 use icy_parser_core::{RipCommand, SkypixCommand};
 use parking_lot::Mutex;
