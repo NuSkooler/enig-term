@@ -8,19 +8,26 @@
 # (must match the wasm-bindgen crate version in both Cargo.toml files), and
 # optionally binaryen's wasm-opt. Override tool paths with WASM_BINDGEN /
 # WASM_OPT. CARGO_TOOLCHAIN defaults to "stable".
+#
+# cargo runs with --locked: the committed Cargo.lock files are what gets built,
+# and a build that would change one fails instead. While changing dependencies,
+# run `cargo update` (or `cargo generate-lockfile`) in the crate and commit the
+# lock, or build once with CARGO_LOCKED=0. CI and release builds keep it on.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TOOLCHAIN="${CARGO_TOOLCHAIN:-stable}"
 FEATURES="${CORE_FEATURES:-}"
 WASM_BINDGEN="${WASM_BINDGEN:-wasm-bindgen}"
 WASM_OPT="${WASM_OPT:-wasm-opt}"
+LOCKED=--locked
+if [ "${CARGO_LOCKED:-1}" = "0" ]; then LOCKED=; fi
 
 "$ROOT/scripts/prepare-icy.sh"
 
 # build <crate dir> <crate file stem> <out dir> [cargo features]
 build() {
     local crate="$1" stem="$2" out="$3" features="${4:-}"
-    (cd "$crate" && cargo "+$TOOLCHAIN" build --release --target wasm32-unknown-unknown ${features:+--features "$features"})
+    (cd "$crate" && cargo "+$TOOLCHAIN" build ${LOCKED:+"$LOCKED"} --release --target wasm32-unknown-unknown ${features:+--features "$features"})
     local raw="${CARGO_TARGET_DIR:-$crate/target}/wasm32-unknown-unknown/release/$stem.wasm"
 
     rm -rf "$out" && mkdir -p "$out"

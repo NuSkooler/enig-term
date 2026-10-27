@@ -3,7 +3,8 @@
 # dist/ is uploaded as an artifact.
 #
 # The toolchain pins and setup live in .github/actions/setup-build, shared
-# with release.yml.
+# with release.yml. CI keeps the npm and cargo caches (it publishes nothing);
+# cargo builds --locked, and the checkout keeps no token in .git/config.
 name: CI
 
 on:
@@ -29,6 +30,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Toolchain and npm ci
         uses: ./.github/actions/setup-build
