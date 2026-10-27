@@ -369,7 +369,8 @@ export class Chrome {
         } catch {
             d.setAttribute('open', '');
         }
-        (allowed ? this.q<HTMLButtonElement>('[data-act="link-open"]') : this.q<HTMLButtonElement>('[data-act="link-cancel"]')).focus();
+        // Cancel, not Open, has the focus: Enter (or a stray key) does not open it.
+        this.q<HTMLButtonElement>('[data-act="link-cancel"]').focus();
     }
 
     /** Ask before connecting to an endpoint the URL gave (see startAction in config.ts). */

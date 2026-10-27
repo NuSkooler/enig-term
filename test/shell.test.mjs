@@ -221,6 +221,16 @@ test('links: only absolute http(s) by default; shown normalised', () => {
     assert.equal(checkLink('https://x.example/' + 'a'.repeat(3000)).ok, false);
 });
 
+test('links: script, data and local schemes are refused even when linkSchemes lists them', () => {
+    const all = ['http', 'https', 'javascript', 'data:', 'VBScript', 'file', 'blob'];
+    for (const u of ['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,hi', 'vbscript:msgbox(1)', 'file:///etc/passwd', 'blob:https://x.example/0b1c']) {
+        const r = checkLink(u, all);
+        assert.equal(r.ok, false, u);
+        assert.match(r.reason, /never allowed/, u);
+    }
+    assert.equal(checkLink('https://x.example/', all).ok, true);
+});
+
 // --- config --------------------------------------------------------------------
 
 test('config: sanitize keeps valid keys, drops invalid ones with a warning', () => {

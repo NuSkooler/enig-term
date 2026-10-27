@@ -70,7 +70,7 @@ ENiGMA generates `version`, `endpoint` and `title`, then merges its
 | `scrollbackOnClear` | boolean | `true` | Keep the non-blank lines of a screen the host clears. |
 | `autoReconnect` | boolean | `false` | Reconnect after an unexpected close, with backoff (1 s doubling to 30 s, jittered; reset after a session of 10 s or more). |
 | `backspace` | `"bs"` or `"del"` | `"bs"` | Backspace sends `^H` (Delete sends DEL), or the reverse. |
-| `linkSchemes` | string array | `["http:", "https:"]` | OSC 8 link schemes that may be opened. |
+| `linkSchemes` | string array | `["http:", "https:"]` | OSC 8 link schemes that may be opened. `javascript:`, `data:`, `vbscript:`, `file:` and `blob:` never are, even when listed. |
 | `allowInsecure` | boolean | `false` | Allow `ws://` to non-loopback hosts (development only). Not settable from the URL. |
 | `termType` | string | `"ansi-bbs"` | Telnet TTYPE answer. |
 | `renderer` | `"webgl2"` or `"2d"` | `"webgl2"` | Output pass. |

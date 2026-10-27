@@ -28,6 +28,10 @@
   stall the page with them.
 - An OSC 0/2 window title is cut to 256 characters before the `title`
   event and the standalone page's title see it.
+- `javascript:`, `data:`, `vbscript:`, `file:` and `blob:` links are
+  refused even when `linkSchemes` lists them, and Cancel, not Open, has the
+  focus in the link confirmation. docs/embedding.md now says a `link`
+  handler that calls `preventDefault()` must check `allowed`.
 
 ## 0.1.1 - 2026-10-27
 

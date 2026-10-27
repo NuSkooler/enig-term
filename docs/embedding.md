@@ -68,7 +68,7 @@ event object as `detail`.
 | `state` | `{ state, detail, endpoint, reconnectInMs? }` |
 | `title` | `{ title }` (OSC 0/2; at most 256 characters) |
 | `bell` | `{}` (BEL; the screen also flashes). At most one per animation frame, however many BELs came. |
-| `link` | `{ url, allowed, reason?, preventDefault() }`: an OSC 8 link was clicked. `preventDefault()` (or on the DOM event) skips the built-in confirmation. |
+| `link` | `{ url, allowed, reason?, preventDefault() }`: an OSC 8 link was clicked. `preventDefault()` (or on the DOM event) skips the built-in confirmation. A handler that does so and opens the link itself must check `allowed` first: `url` is whatever the board sent, `javascript:` included. |
 | `notice` | `{ level, text }`: messages the UI shows (copy refused, engine restarted...) |
 | `recovered` | `{ message, recovered }`: the engine trapped and was replaced |
 | `scroll` | `{ offset, lines }`: the scrollback view moved (0 = live) |

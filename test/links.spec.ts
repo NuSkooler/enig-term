@@ -31,6 +31,8 @@ test('hover shows a link; click asks first with the full URL; Open uses noopener
     const dialog = page.locator('enig-term').locator('[data-linkdialog]');
     await expect(dialog).toBeVisible();
     await expect(dialog.locator('[data-linkurl]')).toHaveText(LINK);
+    // Cancel has the focus: Enter does not open the link.
+    await expect(dialog.locator('[data-act="link-cancel"]')).toBeFocused();
     await page.screenshot({ path: `test/screenshots/${ti.project.name}-link-confirm.png` });
     // Cancel: nothing opens.
     await dialog.locator('[data-act="link-cancel"]').click();
@@ -50,7 +52,7 @@ test('non-http(s) links are shown but cannot be opened', async ({ page }) => {
     const p = await cellPoint(page, 2, 0);
     await page.mouse.click(p.x, p.y);
     const dialog = page.locator('enig-term').locator('[data-linkdialog]');
-    await expect(dialog.locator('[data-linkwhy]')).toContainText('javascript: links are not allowed');
+    await expect(dialog.locator('[data-linkwhy]')).toContainText('javascript: links are never allowed');
     await expect(dialog.locator('[data-act="link-open"]')).toBeHidden();
     await dialog.locator('[data-act="link-cancel"]').click();
     expect(await page.evaluate(() => (window as any).opened)).toEqual([]);
