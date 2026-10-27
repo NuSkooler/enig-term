@@ -18,7 +18,7 @@ the measurements behind the design.
   if the operator installs the fonts.
 - Sharp scaling, 4:3 aspect correction and an optional CRT effect.
 - iCE colours, VGA-rate blink, scrollback, selection and copy, OSC 8 links.
-- CTerm audio and "ANSI" music, as SyncTERM and IcyTerm play them.
+- CTerm audio and "ANSI" music, compatible with SyncTERM.
 - XModem, YModem and ZModem uploads and downloads.
 - Works on phones, with an on-screen key bar for the keys a soft keyboard lacks.
 - One custom element, `<enig-term>`, in a shadow root, for use in any page.
