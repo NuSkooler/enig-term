@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-10-27
+
+- A ZModem upload of two small files, each with a damaged start, no longer
+  stalls until the board's receiver times out: the ZRPOS 0 for the second
+  file was ignored as a repeat of the one for the first.
+
 ## 0.1.0 - 2026-10-27
 
 First release. The archive's `enig-term-0.1.0/` folder holds the built
