@@ -114,6 +114,15 @@ test('cache listing globs work like glob(3): one level, directories marked', () 
     assert.deepEqual(listMatches(names, 'm*/l*'), { files: ['music/lobby.ogg'], dirs: [] });
 });
 
+test('an escaped * or ? in a listing glob is a literal, not a regular expression error', () => {
+    // A backslash before * used to become `^*`, a SyntaxError that the engine logged as an error and answered with nothing.
+    assert.ok(globToRegExp('a\\*b').test('a*b'));
+    assert.ok(!globToRegExp('a\\*b').test('axb'));
+    assert.ok(globToRegExp('a\\?').test('a?'));
+    assert.deepEqual(listMatches(['a*b', 'axb'], 'a\\*b'), { files: ['a*b'], dirs: [] });
+    assert.doesNotThrow(() => listMatches(['a'], '*\\*'));
+});
+
 // --- synthesis ------------------------------------------------------------------------
 
 const crossings = w => {

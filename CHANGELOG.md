@@ -26,6 +26,9 @@
   also keeps at most 4096 images, however small: icy_engine scans the whole
   list for every new image, so 40000 one-pixel images (1.6 MB of sixel)
   took about 5 s, and the time grew with the square of their number.
+- A cache listing (`SyncTERM:C;L;pattern`) whose pattern escaped a `*` or `?`
+  with a backslash failed with a regular expression error and got no answer;
+  the character now matches itself.
 
 ## 0.1.1 - 2026-10-27
 
