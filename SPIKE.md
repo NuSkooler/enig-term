@@ -221,12 +221,14 @@ output but slow for a bulk text dump (I for real devices).
 | `*-cp437-testcard-2d.png` | 2D-canvas fallback (nearest neighbour). |
 | `*-cp437-testcard-dpr2.png` | DPR 2: 2010x1508 device pixels, 1005x754 CSS. `css x dpr` is a whole number. |
 | `*-sauce-ice-9px.png` | SAUCE record honoured: iCE, 9-pixel letter spacing (720-pixel frame, box glyphs extended into the 9th column), font "IBM VGA". 4:3 means a 1.35 stretch (V). |
-| `*-amiga-topaz-latin1.png` | `CSI 0;42 SP D` gives Topaz; then the bytes 0xA0-0xFF. |
 | `*-enigma-art.png` | ENiGMA's own `luciano_blocktronics/MMENU.ANS`, read from `~/dev/enigma-bbs` when the test runs. |
 | `chromium-live-enigma-{default,no-naws,cterm-da}.png` | Live throwaway ENiGMA: the pre-login matrix after the connect probes. |
 
 The `enigma-art` and `live` screenshots show ENiGMA's bundled theme art by
-Luciano Ayres. Drop them before the repo is made public.
+Luciano Ayres; they are kept local only and are not in the repo. The
+`amiga-topaz-latin1` screenshots were rendered with icy_engine's embedded
+Topaz, which has no provenance, and were removed; the Latin-1 finding below
+stands from that run.
 
 **Latin-1 under Topaz: correct (V).** Every glyph 0xA0-0xFF matches
 ISO-8859-1: nbsp ¡ ¢ £ ¤ ¥ ¦ § ¨ © ª « ¬ shy ® ¯ … ÿ. The test sentence
