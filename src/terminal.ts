@@ -100,6 +100,8 @@ const AUDIO_WAIT_MS = 300_000;
 const HELD_MAX = 32 << 20;
 /** A transfer sends only while the WebSocket holds less than this. */
 const SEND_HIGH_WATER = 1 << 20;
+/** Longest window title (OSC 0/2) passed on, characters. */
+const TITLE_MAX = 256;
 
 /** Directory URL (with a trailing slash) relative to the bundle. */
 function dirUrl(s: string): URL | null {
@@ -752,10 +754,13 @@ export class Terminal {
             case 'bell':
                 this.bellPending = true;
                 break;
-            case 'title':
-                this.title = ev.text;
-                this.events.emit('title', { title: ev.text });
+            case 'title': {
+                // Capped before anything shows it (the page's title, the event).
+                const title = ev.text.slice(0, TITLE_MAX);
+                this.title = title;
+                this.events.emit('title', { title });
                 break;
+            }
             case 'apc': {
                 if ('data' in ev) {
                     this.logLine(`apc ${JSON.stringify(ev.data.slice(0, 200))}`);

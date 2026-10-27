@@ -26,6 +26,8 @@
 - A flood of BELs is one bell per animation frame: one `bell` event and
   one flash. Each BEL forced a layout and fired an event, so a board could
   stall the page with them.
+- An OSC 0/2 window title is cut to 256 characters before the `title`
+  event and the standalone page's title see it.
 
 ## 0.1.1 - 2026-10-27
 

@@ -66,7 +66,7 @@ event object as `detail`.
 | Event | Detail |
 |---|---|
 | `state` | `{ state, detail, endpoint, reconnectInMs? }` |
-| `title` | `{ title }` (OSC 0/2) |
+| `title` | `{ title }` (OSC 0/2; at most 256 characters) |
 | `bell` | `{}` (BEL; the screen also flashes). At most one per animation frame, however many BELs came. |
 | `link` | `{ url, allowed, reason?, preventDefault() }`: an OSC 8 link was clicked. `preventDefault()` (or on the DOM event) skips the built-in confirmation. |
 | `notice` | `{ level, text }`: messages the UI shows (copy refused, engine restarted...) |

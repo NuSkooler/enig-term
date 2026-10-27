@@ -25,7 +25,7 @@
     customElements.whenDefined('enig-term').then(() => el.ready).then(h => {
       const base = h.getOption('title');
       document.title = base;
-      h.on('title', ev => { document.title = ev.title ? `${ev.title} - ${base}` : base; });
+      h.on('title', ev => { const t = String(ev.title ?? '').slice(0, 256); document.title = t ? `${t} - ${base}` : base; });
       window.enigTerm = h.terminal; // diagnostics and tests
       document.body.dataset.ready = '1';
     }).catch(() => { document.body.dataset.ready = 'error'; });

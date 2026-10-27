@@ -202,6 +202,21 @@ test('a flood of BELs is one bell (event and flash) per frame', async ({ page })
     expect(n).toBeLessThanOrEqual(3);
 });
 
+test('an OSC title is capped at 256 characters before the event and the page title see it', async ({ page }) => {
+    await open(page);
+    const r = await page.evaluate(async () => {
+        const t = (window as any).enigTerm;
+        const got: string[] = [];
+        t.events.on('title', (e: any) => got.push(e.title));
+        t.write(`\x1b]2;${'T'.repeat(5000)}\x07`);
+        await new Promise(r => requestAnimationFrame(r));
+        return { got: got.map(s => s.length), title: t.title.length, doc: document.title.length };
+    });
+    expect(r.got).toEqual([256]);
+    expect(r.title).toBe(256);
+    expect(r.doc).toBeLessThanOrEqual(256 + ' - enig-term'.length);
+});
+
 test('full screen toggles (element fullscreen, or the viewport-covering fallback)', async ({ page }) => {
     await open(page);
     const btn = page.locator('enig-term').locator('[data-act="fullscreen"]');
