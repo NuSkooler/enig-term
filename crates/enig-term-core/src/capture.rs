@@ -54,6 +54,12 @@ const MAX_URL_LEN: usize = 2048;
 /// (icy_engine allows 256 MB per image, and a few KB of sixel decode to that.)
 pub const SIXEL_BUDGET: usize = 64 << 20;
 
+/// Decoded sixel images one screen keeps, however small. The byte budget
+/// counts pixels only, and icy_engine scans the whole list for every new
+/// image, so thousands of tiny images that do not cover each other would
+/// otherwise cost time quadratic in their number.
+pub const SIXEL_MAX_IMAGES: usize = 4096;
+
 impl LinkTable {
     pub fn intern(&mut self, url: &str) -> u32 {
         if let Some(&id) = self.ids.get(url) {
@@ -395,6 +401,11 @@ impl CaptureScreen {
         self.inner.clear_scrollback();
     }
 
+    /// Sixel images the screen holds (tests, diagnostics).
+    pub fn sixel_count(&self) -> usize {
+        self.inner.buffer.layers[0].sixels.len()
+    }
+
     pub(crate) fn capture_add_sixel(&mut self, pos: Position, sixel: Sixel) {
         if sixel.picture_data.len() > SIXEL_BUDGET {
             return;
@@ -404,7 +415,7 @@ impl CaptureScreen {
         let images = &mut self.inner.buffer.layers[0].sixels;
         let mut total: usize = images.iter().map(|s| s.picture_data.len()).sum();
         let mut evict = 0;
-        while total > SIXEL_BUDGET && evict + 1 < images.len() {
+        while (total > SIXEL_BUDGET || images.len() - evict > SIXEL_MAX_IMAGES) && evict + 1 < images.len() {
             total -= images[evict].picture_data.len();
             evict += 1;
         }

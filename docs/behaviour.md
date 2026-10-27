@@ -72,7 +72,8 @@ images (JXL/PPM) are off.
 Sixel images are on. icy_engine caps one decoded image at 256 MB, and a few KB
 of sixel decode to that, so the screen keeps at most 64 MB of decoded sixel
 pixels (RGBA): a new image evicts the oldest ones until the rest fit, and an
-image larger than 64 MB on its own is dropped. (Before, about 140 KB of sixel
+image larger than 64 MB on its own is dropped. A screen also keeps at most
+4096 images, however small. (Before, about 140 KB of sixel
 grew the WASM memory to about 3.8 GB and trapped the engine.)
 
 Each kind of host request is answered at most 8 times a second, so an echoing

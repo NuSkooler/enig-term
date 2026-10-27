@@ -5,7 +5,9 @@
 - The bundled Ogg decoders refuse a file of more than 8 channels, and stop
   decoding once the PCM (samples x channels x 4 bytes) would pass
   `audioMemory`. A half-megabyte Opus file claiming 255 channels froze the
-  tab for seconds and took gigabytes of memory.
+  tab for seconds and took gigabytes of memory. An Opus file with more than
+  8 streams is refused too: every stream is decoded whether or not a channel
+  uses it, so 255 streams made each second of audio 255 times as costly.
 - The Ogg page reader skips empty packets and refuses a file of more than
   262144 pages or packets. 16 MB of empty pages made 15 million packets
   (36 s, about 3 GB), and a Vorbis file of many small packets overflowed
@@ -20,7 +22,10 @@
   About 100 bytes of macros that invoke each other hung the tab for good.
 - A screen keeps at most 64 MB of decoded sixel images: a new image evicts
   the oldest, and one larger than that alone is dropped. About 140 KB of
-  sixel grew the engine's memory to about 3.8 GB and trapped it.
+  sixel grew the engine's memory to about 3.8 GB and trapped it. A screen
+  also keeps at most 4096 images, however small: icy_engine scans the whole
+  list for every new image, so 40000 one-pixel images (1.6 MB of sixel)
+  took about 5 s, and the time grew with the square of their number.
 
 ## 0.1.1 - 2026-10-27
 
