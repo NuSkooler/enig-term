@@ -182,10 +182,10 @@ to decode an Ogg file itself.
 
 The bundled decoders run in a module Worker started from `enig-term-ogg.js`
 next to `enig-term-audio.js`, one per decode, so a decode never blocks the
-page and one that passes the 15 s limit is terminated. Where no Worker can
-start (the bundle served from another origin than the page, a Content
-Security Policy that refuses it, a browser without module Workers), they run
-on the page's thread as before: the limits above still bound them, but the
+page and one that passes the 15 s limit, or is still running when a new
+session starts, is terminated. Where no Worker can start (the bundle
+served from another origin than the page, a Content Security Policy that
+refuses it, a browser without module Workers), they run on the page's thread as before: the limits above still bound them, but the
 15 s limit then only stops the wait. A Worker that fails to load (a failed
 fetch while offline, say) is tried again on the next decode; after 3 such
 failures in a row the decoders stay on the page's thread. Under a Content Security Policy, the

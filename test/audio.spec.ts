@@ -397,6 +397,36 @@ test.describe('formats', () => {
         expect(r.full.channels).toBe(8);
     });
 
+    test('a session reset terminates a decode running in a Worker', async ({ page }) => {
+        const file = longOpus(fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')), 4000).toString('base64');
+        const r = await page.evaluate(async b64 => {
+            const m = await import('/enig-term-audio.js' as string);
+            const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const ctx = new OfflineAudioContext(1, 48000, 48000);
+            let terminated = 0;
+            const terminate = Worker.prototype.terminate;
+            Worker.prototype.terminate = function (this: Worker) {
+                terminated++;
+                return terminate.call(this);
+            };
+            const e = new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 20000, musicTone: 'square', forceFallback: true, clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 }));
+            const t = performance.now();
+            const p = e.decode(bytes);
+            await new Promise(res => setTimeout(res, 300));
+            const before = terminated;
+            e.reset();
+            const ok = !!(await p);
+            Worker.prototype.terminate = terminate;
+            return { ok, before, terminated, ms: performance.now() - t, stats: { ...e.stats } };
+        }, file);
+        expect(r.before).toBe(0);
+        expect(r.terminated).toBe(1);
+        expect(r.ok).toBe(false);
+        // The decode takes seconds; the reset ended it at once.
+        expect(r.ms, JSON.stringify(r)).toBeLessThan(1500);
+        expect(r.stats.workerDecodes + r.stats.decodeTimeouts).toBe(0);
+    });
+
     test('a Worker that fails to start is tried again on a later decode; after 3 failures in a row the decoders run on the page', async ({ page }) => {
         const file = fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')).toString('base64');
         const r = await page.evaluate(async b64 => {

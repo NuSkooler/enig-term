@@ -135,6 +135,8 @@ export class AudioEngine {
     private ogg: Promise<OggModule | null> | null = null;
     /** Module Workers that failed to start in a row (a failed fetch while offline, say); at WORKER_TRIES the Ogg decoders run on this thread for good. */
     private workerFails = 0;
+    /** Decodes running in a Worker: a reset stops them. */
+    private workers = new Set<() => void>();
     private generation = 0;
     /** Counters (tests, diagnostics). */
     readonly stats = { commands: 0, rejected: 0, decodes: 0, fallbackDecodes: 0, workerDecodes: 0, decodeTimeouts: 0, decodeFailures: 0, dropped: 0, errors: 0 };
@@ -416,9 +418,12 @@ export class AudioEngine {
             let started = false;
             const done = (r: OggResult | null | undefined) => {
                 clearTimeout(timer);
+                this.workers.delete(stop);
                 w.terminate();
                 res(r);
             };
+            const stop = () => done(null);
+            this.workers.add(stop);
             const timer = setTimeout(() => {
                 this.stats.decodeTimeouts++;
                 this.host.log(`audio: the Ogg decode took longer than ${this.opts.decodeMs / 1000} s, stopped`);
@@ -463,6 +468,7 @@ export class AudioEngine {
     /** A new session with the host: stop everything, forget slots and levels (the cache stays). */
     reset(): void {
         this.generation++;
+        for (const stop of [...this.workers]) stop();
         this.chain = Promise.resolve();
         this.mixer.reset();
         this.schedule();

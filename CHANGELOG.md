@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A new session terminates a decode still running in a Worker, instead of
+  letting it run on for up to 15 s.
 - A decode Worker that fails to load is tried again on a later decode.
   One failure (a failed fetch while offline, say) used to move the bundled
   Ogg decoders to the page's thread, without the 15 s stop, until the page
