@@ -9,7 +9,7 @@ publish = false
 # The ZModem code is icy_board's crates/icy_net, compiled straight from the
 # checkout scripts/prepare-icy.sh makes in build/icy_board/ (with
 # patches/icy_board/*.patch applied); see src/lib.rs. This is the revision
-# icy_tools 1456074e pins for icy_net.
+# icy_tools 274262d8 pins for icy_net.
 [package.metadata.enig-term]
 icy-board-rev = "46461702f01ea8b7a7aef55506338db776064a14"
 

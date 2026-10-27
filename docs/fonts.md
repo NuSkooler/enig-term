@@ -64,9 +64,10 @@ Ps1 puts the font into attribute slot 0 (normal), 1 (bold), 2 (blink) or 3
 (bold and blink). Bold text uses slot 1 under `CSI ? 31 h`, blinking text slot
 2 under `CSI ? 34 h`, and text that is both uses slot 3. `CSI ? 32 h` stops
 bold from brightening and `CSI ? 35 h` stops blinking text from blinking
-(CTerm's meaning of 35, not icy_engine's cursor blink). Fonts are per cell,
-so like everything in icy_engine these apply to text written afterwards. Ps1
-above 3 is refused.
+(CTerm's meaning of 35; the cursor blink is xterm's `CSI ? 12 h/l`). With
+iCE colours on, the blink bit still brightens the background under
+`CSI ? 35 h`. icy_engine applies these modes; fonts are per cell, so they
+apply to text written afterwards. Ps1 above 3 is refused.
 
 `DCS CTerm:Font:<slot>:<base64>` loads slots 46-255 (`pF = 46` in
 `CSI = 1 n`). The current CTerm manual puts loadable fonts above its

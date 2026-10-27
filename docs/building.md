@@ -49,7 +49,7 @@ Build variables:
 
 ## The engine: a patched icy_tools
 
-icy_tools is pinned at `1456074e` in `crates/enig-term-core/Cargo.toml`.
+icy_tools is pinned at `274262d8` in `crates/enig-term-core/Cargo.toml`.
 `crates/enig-term-core/Cargo.lock` is the real pin for everything else,
 because several of icy_tools' own git dependencies have no revision.
 
@@ -59,15 +59,15 @@ checkout is shallow, about 125 MB on disk. Set `ICY_TOOLS_GIT=` to a local
 clone for offline builds. The `[patch."https://github.com/mkrueger/icy_tools"]`
 section in Cargo.toml builds icy_engine and icy_parser_core from there.
 
-There are two patches. `0001-no-embedded-fonts.patch` (7 files, about 40
-lines) removes every font compiled into icy_engine. It shadows
-`include_bytes!`/`include_str!` for the crate with macros that yield empty
-data, makes `BitFont::from_bytes` refuse empty data, and turns the unwraps on
-built-in fonts into a blank placeholder. The shell loads the fonts it ships
-instead (see [Fonts](fonts.md)). `0002-bound-nested-macro-expansion.patch`
-bounds nested CTerm macro expansion (see
-[Behaviour](behaviour.md#cterm-macros)); it is upstream PR
-mkrueger/icy_tools#197 and can be dropped once the pin includes it.
+No font is compiled into icy_engine: Cargo.toml turns off its default
+features, and with them `embedded-fonts`. Font lookups then find nothing
+built in, and the shell loads the fonts it ships instead (see
+[Fonts](fonts.md)). There is one patch.
+`0001-bgi-fonts-follow-embedded-fonts.patch` (one file) puts the BGI stroke
+fonts (`palette_screen_buffer/bgi/fonts/*.CHR`, about 125 KB, used only by
+RIP) under the same `font_bytes!` macro, because they are not under
+`data/fonts` and the feature does not cover them. Without it they are
+compiled into the WASM. It can go once upstream gates them too.
 
 ## ZModem: a second WASM module
 
@@ -86,15 +86,19 @@ change is in [File transfers](transfers.md#how-it-is-built).
 1. Change both `rev = "..."` values in `crates/enig-term-core/Cargo.toml`.
 2. Run `scripts/prepare-icy.sh`. If a patch no longer applies, fix it in
    `build/icy_tools/` and save it again with
-   `git -C build/icy_tools diff > patches/icy_tools/0001-no-embedded-fonts.patch`
+   `git -C build/icy_tools diff > patches/icy_tools/0001-bgi-fonts-follow-embedded-fonts.patch`
    (patches apply in name order, so regenerate a later one against a
    checkout with the earlier ones committed).
-   The intent is in the patch's comments: no font data compiled in, no panic
-   on a missing built-in font. Check for new `include_bytes!` users that are
-   not fonts, since the shadowing macros would empty them too. There are none
-   at `1456074e`.
+   The intent is in the patch's comment: no font data compiled in. Check
+   for new `include_bytes!`/`include_str!` users in icy_engine that
+   `embedded-fonts` does not gate (at `274262d8` only the BGI fonts), and
+   check the built WASM for font data (grep it for a few bytes of each file
+   under `data/fonts` and `bgi/fonts`).
 3. Run `cargo update -p icy_engine -p icy_parser_core` in the crate, then
-   review the `Cargo.lock` diff.
+   review the `Cargo.lock` diff. It may also move dependencies that
+   icy_tools declares without a revision (`codepages` from icy_board, for
+   one); put those back with `cargo update -p <name> --precise <rev>`
+   unless the move is wanted.
 4. Regenerate the screen wrapper with `python3 scripts/gen-delegate.py build/icy_tools`.
 5. `npm run build`, `npm test`. After checking the screenshots, `npm run goldens`.
 

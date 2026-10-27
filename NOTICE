@@ -5,7 +5,7 @@ Copyright (c) 2026, Bryan D. Ashby. Licensed under the BSD 2-Clause License
 This product links, as WebAssembly, third-party code under its own licenses.
 
 icy_tools (icy_engine, icy_parser_core)
-  https://github.com/mkrueger/icy_tools  (pinned at 1456074edac862d79d87ccd8cd4f0e87a57a9d39)
+  https://github.com/mkrueger/icy_tools  (pinned at 274262d834d02fa6bccd49d94109226146b00b96)
   Copyright (c) Mike Krueger and contributors.
   Licensed under the MIT License OR the Apache License, Version 2.0, at your
   option. enig-term uses it under the MIT License.
@@ -30,9 +30,11 @@ icy_tools (icy_engine, icy_parser_core)
   ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-  The WASM is built from that revision with patches/icy_tools/*.patch
-  applied, which remove icy_engine's embedded bitmap fonts (they carry no
-  provenance or license information upstream). None of them is distributed.
+  The WASM is built from that revision without icy_engine's embedded-fonts
+  feature, and with patches/icy_tools/*.patch applied, which also leave out
+  the BGI stroke fonts that feature does not cover. icy_engine's embedded
+  fonts carry no provenance or license information upstream; none of them
+  is distributed.
 
 Transitive Rust dependencies of icy_engine are listed in
 crates/enig-term-core/Cargo.lock; each is under its own (permissive) license.
