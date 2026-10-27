@@ -9,6 +9,7 @@ each with one top-level folder, `enig-term-<version>/`, and a `SHA256SUMS`.
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify enig-term-0.1.0.zip --repo NuSkooler/enig-term   # optional: build provenance (releases after 0.1.1)
 unzip enig-term-0.1.0.zip                 # or: tar xzf enig-term-0.1.0.tar.gz
 mkdir -p /path/to/enigma-bbs/ws-term      # or a directory under any web root
 cp -a enig-term-0.1.0/. /path/to/enigma-bbs/ws-term/
@@ -42,6 +43,7 @@ Build variables:
 | `WASM_BINDGEN=`, `WASM_OPT=` | Tool paths. |
 | `CARGO_TOOLCHAIN=` | Default `stable`. |
 | `CARGO_TARGET_DIR=` | Honoured. |
+| `CARGO_LOCKED=0` | Lets cargo update `Cargo.lock`. By default it builds `--locked` and fails rather than change a lock; after changing a dependency, run `cargo update` in the crate and commit the lock. |
 | `CORE_FEATURES=viewer` | Adds the whole-file viewer path. Roughly doubles the WASM. |
 | `ENIG_TERM_SOURCEMAP=1` | Writes `enig-term.js.map`. Off by default so it is not part of `dist/`. |
 
@@ -159,7 +161,9 @@ Playwright on Chromium, Firefox and Pixel 7. WebKit runs as a non-blocking
 step. lrzsz is installed there; sexyz is not packaged, so its tests skip.
 `dist/` is uploaded as the `enig-term-dist` artifact. The pins and the
 setup steps live in `.github/actions/setup-build/action.yml`, which the
-release workflow shares.
+release workflow shares. cargo builds `--locked` against the committed
+`Cargo.lock` files, the checkout keeps no token in `.git/config`, and the job
+can only read the repository. CI restores the npm and cargo caches.
 
 ### Releases
 
@@ -171,6 +175,26 @@ toolchain as CI and runs the Node unit tests (Playwright is left to CI on
 required files are there, and there is no `fonts/amiga/` and no
 `config.json`. The release notes are the `## X.Y.Z - <date>` section of
 `CHANGELOG.md`.
+
+The workflow has three jobs, so that no write permission is held while
+repository or dependency code runs:
+
+- `build` (read-only) does all of the above. It is a clean build: no npm or
+  cargo cache is restored, so nothing CI cached reaches a release. cargo
+  runs `--locked` and the checkout keeps no token. It uploads the archives,
+  `SHA256SUMS` and `notes.md` as the workflow artifact `release`.
+- `attest` (`id-token` and `attestations: write`) signs
+  [build provenance](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations)
+  for the two archives with `actions/attest-build-provenance`.
+- `publish` (`contents: write`) creates the GitHub Release from the
+  artifact. Neither it nor `attest` checks out or runs repository code.
+
+The provenance ties each archive to the workflow run, commit and tag that
+built it. To check a downloaded archive (GitHub CLI 2.49 or later):
+
+```sh
+gh attestation verify enig-term-X.Y.Z.zip --repo NuSkooler/enig-term
+```
 
 To cut a release: set the version in `package.json`, head the CHANGELOG
 section `## X.Y.Z - YYYY-MM-DD`, commit, then tag and push the tag. To check

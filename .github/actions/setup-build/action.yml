@@ -2,6 +2,10 @@
 # npm cache, Rust with wasm32, wasm-bindgen-cli and wasm-opt (checksummed),
 # the cargo cache, then npm ci. Run it after actions/checkout.
 #
+# cache: 'false' skips both caches (the release build is a clean one: a cache
+# CI wrote, cargo target/ directories included, never reaches a release).
+# cargo always runs --locked (scripts/build-wasm.sh; CARGO_LOCKED=1 below).
+#
 # Toolchain pins (bump together with docs/building.md, "Toolchain"):
 #   Rust 1.96.0 + wasm32-unknown-unknown
 #   wasm-bindgen-cli 0.2.129 (must equal the wasm-bindgen crate pin in both
@@ -11,13 +15,19 @@
 name: Set up the enig-term build
 description: Pinned Node, Rust, wasm-bindgen-cli and wasm-opt; cargo cache; npm ci.
 
+inputs:
+  cache:
+    description: "'true' restores and saves the npm and cargo caches; 'false' builds from nothing"
+    required: false
+    default: 'true'
+
 runs:
   using: composite
   steps:
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 22.22.2
-        cache: npm
+        cache: ${{ inputs.cache == 'true' && 'npm' || '' }}
 
     - name: Toolchain pins
       shell: bash
@@ -29,6 +39,7 @@ runs:
           echo "BINARYEN_VERSION=version_133"
           echo "BINARYEN_SHA256=2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489"
           echo "CARGO_TERM_COLOR=always"
+          echo "CARGO_LOCKED=1"
         } >> "$GITHUB_ENV"
 
     - name: Rust toolchain
@@ -53,6 +64,7 @@ runs:
         echo "WASM_OPT=$RUNNER_TEMP/tools/binaryen-${BINARYEN_VERSION}/bin/wasm-opt" >> "$GITHUB_ENV"
 
     - name: Cache cargo
+      if: inputs.cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
