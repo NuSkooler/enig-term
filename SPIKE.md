@@ -221,7 +221,7 @@ output but slow for a bulk text dump (I for real devices).
 | `*-cp437-testcard-2d.png` | 2D-canvas fallback (nearest neighbour). |
 | `*-cp437-testcard-dpr2.png` | DPR 2: 2010x1508 device pixels, 1005x754 CSS. `css x dpr` is a whole number. |
 | `*-sauce-ice-9px.png` | SAUCE record honoured: iCE, 9-pixel letter spacing (720-pixel frame, box glyphs extended into the 9th column), font "IBM VGA". 4:3 means a 1.35 stretch (V). |
-| `*-enigma-art.png` | ENiGMA's own `luciano_blocktronics/MMENU.ANS`, read from `~/dev/enigma-bbs` when the test runs. |
+| `*-enigma-art.png` | ENiGMA's own `luciano_blocktronics/MMENU.ANS`, read from a local ENiGMA checkout (`ENIGMA_ART=`) when the test runs. |
 | `chromium-live-enigma-{default,no-naws,cterm-da}.png` | Live throwaway ENiGMA: the pre-login matrix after the connect probes. |
 
 The `enigma-art` and `live` screenshots show ENiGMA's bundled theme art by
@@ -238,8 +238,8 @@ ISO-8859-1: nbsp ¡ ¢ £ ¤ ¥ ¦ § ¨ © ª « ¬ shy ® ¯ … ÿ. The test 
 ## Live ENiGMA run (V)
 
 Setup:
-- `node ./main.js --config <scratch>/config/` from `~/dev/enigma-bbs`, using
-  mise's Node 22.
+- `node ./main.js --config <scratch>/config/` from an ENiGMA checkout, using
+  Node 22.
 - `menuFile` set to `config/menus/dev_enig-main.hjson`; `menus/` and
   `security/` symlinked in.
 - db, modsDb, logs, dropFiles, emailInbound, the file base and every FTN
@@ -457,7 +457,7 @@ on provenance.
 
 ## Harness
 
-One harness (`scratchpad/p4/harness/harness.mjs`, kept out of the repo),
+One harness (a local script, kept out of the repo),
 two adapters with the same interface. It runs the real programs over pipes
 (lrzsz `sz`/`rz`; `sexyz -raw sz`/`rz`) and checks byte-identical files:
 small, 70,000 bytes with every byte value and runs of the bytes ZModem and

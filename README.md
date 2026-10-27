@@ -101,6 +101,7 @@ ENIG_TERM_LIVE_WS=ws://127.0.0.1:18810 npm run test:live            # a throwawa
 ENIG_TERM_LIVE_PAGE=http://127.0.0.1:18080/_enig/ws-term/ npm run test:live   # through ENiGMA's route
 ENIG_TERM_LIVE_XFER=ws://127.0.0.1:18910 ENIG_TERM_LIVE_XFER_DIR=<its scratch tree> npx playwright test test/transfer-live.spec.ts
 npm run fonts:amiga  # optional: install the Amiga fonts into test/amiga-fonts/ (gitignored)
+ENIGMA_ART=<file.ans> npx playwright test test/render.spec.ts   # optional: also screenshot a real piece of art (not committed)
 npm run fonts -- <oldschool_pc_font_pack_v2.2_FULL.zip>   # regenerate fonts/ (rarely)
 ```
 

@@ -158,9 +158,10 @@ test('Amiga profile: Topaz test card from the fetched fonts (skipped when not in
     await shot(page, 'amiga-topaz-testcard', ti.project.name);
 });
 
+// ENIGMA_ART=<an ENiGMA checkout>/art/themes/luciano_blocktronics/MMENU.ANS
 test('real ENiGMA art (local only: never committed)', async ({ page }, ti) => {
-    const art = process.env.ENIGMA_ART ?? path.join(process.env.HOME ?? '', 'dev/enigma-bbs/art/themes/luciano_blocktronics/MMENU.ANS');
-    test.skip(!fs.existsSync(art), `no art at ${art}`);
+    const art = process.env.ENIGMA_ART ?? '';
+    test.skip(!art || !fs.existsSync(art), art ? `no art at ${art}` : 'set ENIGMA_ART to a piece of ANSI art');
     await open(page);
     const b64 = fs.readFileSync(art).toString('base64');
     await page.evaluate(b => {
