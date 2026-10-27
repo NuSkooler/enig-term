@@ -136,6 +136,13 @@ left out with a loud `SKIPPING WebKit tests` warning. To run them:
 `ENIG_TERM_REQUIRE_WEBKIT=1` turns the skip into an error (for CI).
 Playwright is pinned to 1.60.0 to match the cached browser builds.
 
+**CI** (`.github/workflows/ci.yml`) builds both WASM modules from a clean
+checkout with pinned tools (Rust 1.96.0, wasm-bindgen-cli 0.2.129, binaryen
+version_133, Node 22), then runs the typecheck, the Node unit tests and
+Playwright on Chromium, Firefox and Pixel 7; WebKit runs as a non-blocking
+step. lrzsz is installed there; sexyz is not packaged, so its tests skip.
+`dist/` is uploaded as the `enig-term-dist` artifact.
+
 What the browser tests cover: golden engine frames (`test/goldens.json`, the
 same hashes in Node and every browser), canvas colour samples through WebGL2
 and the 2D fallback, the keymap and typed/pasted encodings, synthetic IME
