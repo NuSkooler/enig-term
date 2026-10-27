@@ -13,6 +13,8 @@
   `transferMaxFile`, or the size the board announced by more than 8 KB.
   Only the announced size was checked, so a board could announce a small
   file and send an unbounded one into browser memory.
+- A Telnet subnegotiation keeps at most 1 KB; the rest, up to IAC SE, is
+  dropped. An unterminated one grew without limit.
 
 ## 0.1.1 - 2026-10-27
 

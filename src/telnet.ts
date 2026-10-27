@@ -28,6 +28,9 @@ const OPT_TTYPE = 24;
 const OPT_NAWS = 31;
 const OPT_NEW_ENVIRON = 39;
 
+/** Subnegotiation bytes kept; the rest, up to IAC SE, is dropped (ours are a few bytes). */
+const SB_MAX = 1024;
+
 const TTYPE_IS = 0;
 const TTYPE_SEND = 1;
 
@@ -122,12 +125,12 @@ export class TelnetClient {
 
                 case S.Sb:
                     if (b === IAC) this.state = S.SbIac;
-                    else this.sb.push(b);
+                    else if (this.sb.length < SB_MAX) this.sb.push(b);
                     break;
 
                 case S.SbIac:
                     if (b === IAC) {
-                        this.sb.push(IAC); // escaped literal inside subnegotiation
+                        if (this.sb.length < SB_MAX) this.sb.push(IAC); // escaped literal inside subnegotiation
                         this.state = S.Sb;
                     } else if (b === SE) {
                         this.subnegotiate(this.sb, reply);

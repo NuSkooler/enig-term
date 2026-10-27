@@ -56,6 +56,18 @@ test('telnet: TTYPE ansi-bbs, escaped 0xFF data, IAC split across chunks, unknow
     assert.equal(u.receive(new Uint8Array([SE, 0x58])).data[0], 0x58);
 });
 
+test('telnet: an endless subnegotiation is capped near 1 KB, and the stream recovers after IAC SE', () => {
+    const t = new TelnetClient({ termType: 'ansi-bbs', getSize: () => ({ cols: 80, rows: 25 }) });
+    t.receive(new Uint8Array([IAC, SB, 24]));
+    const chunk = new Uint8Array(1 << 16).fill(0x41);
+    let shown = 0;
+    for (let i = 0; i < 64; i++) shown += t.receive(chunk).data.length;
+    shown += t.receive(new Uint8Array(4096).fill(IAC)).data.length; // escaped 0xFFs inside it too
+    assert.equal(shown, 0, 'nothing inside SB is terminal data');
+    assert.ok(t.sb.length <= 1024, `sb holds ${t.sb.length} bytes`);
+    assert.deepEqual([...t.receive(new Uint8Array([IAC, IAC, IAC, SE, 0x58])).data], [0x58]);
+});
+
 test('telnet: NAWS on every resize once negotiated; 255 escaped; refusable for tests', () => {
     let size = { cols: 80, rows: 25 };
     const t = new TelnetClient({ getSize: () => size });
