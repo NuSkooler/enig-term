@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.3.0 - 2026-10-27
+
+The engine moves to icy_tools 274262d8 (upstream master), which includes
+the hardening, embedder API and CTerm conformance changes made for
+enig-term (upstream PRs #197, #198 and #199).
+
+- icy_tools is pinned at 274262d8 (was 1456074e). Upstream now bounds
+  nested CTerm macro expansion, clamps scroll margins, checks the slot and
+  height of DCS font loads, checks inline image dimensions before
+  decoding, trims the scrollback when its size shrinks, drops OSC, DCS and
+  APC strings over the length cap, and uses web-time for the synchronized
+  output clock.
+- Patch 0002 (nested macro expansion) is dropped: it is upstream.
+- Patch 0001 (no embedded fonts) is dropped. icy_engine is built without
+  its new embedded-fonts feature instead. A one-file patch,
+  0001-bgi-fonts-follow-embedded-fonts.patch, leaves out the BGI stroke
+  fonts, which that feature does not cover. The WASM still holds no font
+  data.
+- CTerm modes 31, 32, 34 and 35 are applied by icy_engine as text is
+  written; enig-term no longer tracks them itself. One change: with iCE
+  colours on, `CSI ? 35 h` keeps the blink bit, so it still brightens the
+  background, as in SyncTERM.
+- `CSI ? 12 h` and `CSI ? 12 l` (xterm) turn the cursor blink on and off.
+  They were ignored.
+- An echoed CTDA reply (`CSI < 0 ; 1 ; 2 c`) is no longer answered. Only
+  `CSI < c` and `CSI < 0 c` are requests.
+- `CSI = Ps n` requests come from icy_engine with their parameters,
+  instead of being recovered from its parse errors. `CSI = n` is answered
+  like `CSI = 1 n`. A request with more parameters, other than the audio
+  report `CSI = 7`, still gets no reply.
+- OSC 8 links in scrollback follow icy_engine's public `active_hyperlink()`
+  rather than a copy of its rules.
+- CTerm music still uses enig-term's own parser. icy_engine's now follows
+  the CTerm manual as well and gives the same notes, but a dotted rest at
+  some tempos comes out 1 or 2 ms longer than SyncTERM's arithmetic, and
+  switching would not remove code.
+- `CSI ? 2026 h` no longer traps inside icy_engine, so the `debugPanic`
+  test hook panics on purpose. The core's `debug_passthrough_sync` is now
+  `debug_panic_on_sync`.
+- The core WASM is 4,324,315 bytes (1,648,373 gzipped), up from 4,318,713
+  (1,644,772): the new upstream code, not font data.
+
 ## 0.2.0 - 2026-10-27
 
 Security release. A review of 0.1.0 found that a crafted link could point
