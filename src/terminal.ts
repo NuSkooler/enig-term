@@ -1346,7 +1346,9 @@ export class Terminal {
         }
         // The engine's own SAUCE font lookup finds nothing (no fonts compiled
         // in), so the selection goes ahead of the art, after the core's reset.
-        const art = slot ? new Uint8Array([...fromLatin1(`${CSI}0;${slot} D`), ...bytes]) : bytes;
+        // Slot 0 is selected too: its event resets the charset and profile a
+        // previous file's font set.
+        const art = new Uint8Array([...fromLatin1(`${CSI}0;${slot ?? 0} D`), ...bytes]);
         const info = JSON.parse(this.core.call(c => c.load_sauce_art(art), '{}'));
         // Only the font selection matters here: the art's queries are not answered.
         for (const ev of JSON.parse(this.core.call(c => c.take_events(), '[]')) as CoreEvent[]) if (ev.t === 'font') this.onEvent(ev);

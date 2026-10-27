@@ -179,6 +179,8 @@ test('SAUCE Amiga font name selects the installed Amiga font (skipped when not i
     test.skip(!(await amigaFontsInstalled(page)), 'no Amiga fonts (npm run fonts:amiga)');
     expect(await showSauceFont(page, 'Amiga Topaz 2+')).toEqual({ sauceFont: { name: 'Amiga Topaz 2+', slot: 40, height: 8 }, page: 40, cellPage: 40, profile: 'amiga' });
     expect(await showSauceFont(page, "Amiga mO'sOul")).toMatchObject({ sauceFont: { slot: 38 }, cellPage: 38 });
+    // The next file without an Amiga font returns to the PC look.
+    expect(await showSauceFont(page, 'IBM VGA 737')).toMatchObject({ sauceFont: { slot: null }, cellPage: 0, profile: 'pc' });
 });
 
 test('Latin-1 high half through slot 42 (licensed ISO-8859-1 stand-in); golden frame', async ({ page }, ti) => {
