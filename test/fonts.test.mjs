@@ -109,6 +109,17 @@ test('CSI ? 32 h: bold does not brighten; CSI ? 35 h: blinking text does not bli
     assert.deepEqual(req(c, 'fontmode').modes, [7, 25, 32, 35]);
 });
 
+test('CSI ? 35 h with iCE on: the blink bit still brightens the background; ? 35 is not the cursor blink', () => {
+    const c = withFonts(new Core(80, 25, 'ansi'));
+    c.feed(bytes(`${CSI}?33h${CSI}?35h${CSI}1;1H${CSI}5;41m ${CSI}0m`));
+    assert.deepEqual(pixel(c, 4, 8), [0xff, 0x55, 0x55], 'bright red background');
+    assert.equal(c.cursor_blinking(), true, '? 35 h leaves the cursor alone');
+    c.feed(bytes(`${CSI}?12l`));
+    assert.equal(c.cursor_blinking(), false, 'xterm ? 12 l stops the cursor blinking');
+    c.feed(bytes(`${CSI}?12h`));
+    assert.equal(c.cursor_blinking(), true);
+});
+
 test('CSI = 3 n reports the cell size of the screen mode, including 9-dot letter spacing', () => {
     const c = withFonts(new Core(80, 25, 'ansi'));
     c.feed(bytes(`${CSI}=3n`));

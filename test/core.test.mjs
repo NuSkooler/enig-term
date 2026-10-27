@@ -26,6 +26,19 @@ test('host requests surface as events with state captured at request time', () =
     assert.deepEqual([ev[6].h, ev[6].w], [16, 8]);
 });
 
+test('an echoed CTDA reply is not a request; CSI = 7 n is one audio request, other CSI = Ps n with more parameters none', () => {
+    const c = new Core(80, 25, 'ansi');
+    c.feed(bytes(`${CSI}<0;1;2;3;5c${CSI}<0c${CSI}=7;1n${CSI}=7n${CSI}=6;1n${CSI}=4n`));
+    const ev = events(c).filter(e => e.t === 'req');
+    assert.deepEqual(
+        ev.map(e => e.k),
+        ['other', 'ctda', 'audio', 'audio', 'other', 'ctsmrr'],
+    );
+    assert.deepEqual(ev[2].params, [7, 1]);
+    assert.deepEqual(ev[3].params, [7]);
+    assert.equal(ev[5].n, 4);
+});
+
 test('sequences split across feed() calls', () => {
     const c = new Core(80, 25, 'ansi');
     const s = `${CSI}12;34H${CSI}6n${CSI}1;31mX`;
