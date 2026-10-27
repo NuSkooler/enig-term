@@ -470,10 +470,31 @@ screen and reports `pR = 1` in `CSI = 1 n`; a selection never draws blank.
   `CSI = 1 n`; the current CTerm manual puts loadable fonts above its
   built-ins, which now end at 45), any drawable size (8 wide, 1-32 high), kept at its own
   height. Reloading a slot in use updates its cells at once.
-- **SAUCE**: letter spacing (9-dot) and iCE apply; the SAUCE font name is not
-  mapped to our fonts yet (the file renders with slot 0, CP437 at the mode's
-  height). The 9th column is the engine's: blank, or a copy of column 8 for
-  0xC0-0xDF (the VGA's 9-dot alternate glyphs are not reproduced).
+- **SAUCE** (`terminal.showSauceArt(bytes)`): letter spacing (9-dot) and iCE apply, and the
+  font name (TInfoS) selects one of our fonts, fetched first, at the mode's
+  cell height (the height the name implies, e.g. 8 for "IBM VGA50", is
+  reported as `sauceFont.height` but not applied). Case, spacing, `_`/`-`,
+  "plus" for "+" and 0 for O ("P0T-NOoDLE") do not matter:
+
+  | SAUCE name | Font |
+  |---|---|
+  | IBM VGA, VGA50, VGA25G, EGA, EGA43 (no code page, or 437) | 0, CP437 |
+  | IBM ... 850, ... 858 | 18, CP850 (858's euro at 0xD5 shows CP850's dotless i) |
+  | IBM ... 865 | 28, CP865 |
+  | IBM ... 866 | 25, CP866 |
+  | IBM ... 819 | 24, ISO-8859-1 |
+  | Amiga Topaz 1, Amiga Topaz 2 | 42, Topaz (the Kickstart version the operator installed) |
+  | Amiga Topaz 1+, Amiga Topaz 2+ | 40, Topaz Plus |
+  | Amiga P0T-NOoDLE, Amiga MicroKnight, Amiga MicroKnight+, Amiga mOsOul | 37, 41, 39, 38 |
+  | IBM ... 720, 737, 775, 852, 855, 857, 860-864, 869, 872, KAM, MAZ, MIK; C64 PETSCII; Atari ATASCII; anything else | none: slot 0 |
+
+  A name we have no font for, an Amiga font that is not installed, or a
+  fetch that fails or takes over 5 s leaves slot 0 (CP437), without a notice. An
+  Amiga font switches the auto profile to the Amiga look, as a host's
+  selection does. The result's `sauceFont` is `{ name, slot, height }`
+  (`slot` null: the default was used), or null without a font name. The 9th
+  column is the engine's: blank, or a copy of column 8 for 0xC0-0xDF (the
+  VGA's 9-dot alternate glyphs are not reproduced).
 
 ### Amiga fonts
 

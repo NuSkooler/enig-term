@@ -54,6 +54,19 @@
   detector; a transfer fuzzer (`npm run fuzz:xfer`); browser tests against the
   fake BBS; and a live matrix against ENiGMA (`test/transfer-live.spec.ts`).
 
+## Unreleased: SAUCE font names
+
+- **The SAUCE font name selects our font**: `showSauceArt` reads TInfoS and
+  maps the SAUCE spec's names to the fonts we have: "IBM VGA"/"VGA50"/
+  "VGA25G"/"EGA"/"EGA43" with code page 437, 819, 850, 858, 865 or 866 to
+  the PC font of that code page; "Amiga Topaz 1/2(+)", "P0T-NOoDLE",
+  "MicroKnight(+)" and "mOsOul" to the operator's Amiga fonts (37-42),
+  leniently spelt. Anything else (other code pages, C64, Atari, unknown
+  names), or a font that is not installed, keeps slot 0. Until now every
+  SAUCE file rendered with slot 0: icy_engine's own lookup finds no font
+  once its fonts are stripped. The cell height stays the mode's.
+  `showSauceArt` now returns a promise, and its result has `sauceFont`.
+
 ## Unreleased: font slots 43-45
 
 - **DCS-loaded fonts start at slot 46** (`pF = 46` in `CSI = 1 n`). The
