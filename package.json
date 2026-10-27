@@ -1,6 +1,6 @@
 {
   "name": "enig-term",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Browser BBS terminal: icy_engine in WASM, a TypeScript shell, WebGL2 output",
   "license": "BSD-2-Clause",
   "author": "Bryan D. Ashby",
