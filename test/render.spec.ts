@@ -19,7 +19,7 @@ async function show(page: Page, fixture: string, mode: 'stream' | 'sauce' = 'str
             const t = (window as any).enigTerm;
             const buf = new Uint8Array(await (await fetch(`/fixtures/${name}`)).arrayBuffer());
             let info: unknown = null;
-            if (how === 'sauce') info = t.showSauceArt(buf);
+            if (how === 'sauce') info = await t.showSauceArt(buf);
             else t.write(buf);
             t.renderFrame(true);
             const c = t.core.core;
@@ -128,10 +128,57 @@ test('SAUCE file: iCE + 9px + font name applied; golden frame', async ({ page },
     const r = await show(page, 'sauce-ice-9px.ans', 'sauce');
     expect((r.info as any).ice).toBe(true);
     expect((r.info as any).letterSpacing).toBe(true);
+    expect((r.info as any).sauceFont).toEqual({ name: 'IBM VGA', slot: 0, height: 16 });
     expect(r.frame).toEqual([720, 400]);
     expect(r.sha256).toBe(GOLDENS['sauce-ice-9px'].sha256);
     expect(r.canvas[0] / r.canvas[1]).toBeCloseTo(4 / 3, 2);
     await shot(page, 'sauce-ice-9px', ti.project.name);
+});
+
+/** A small ANSI file with a SAUCE record naming `font` (TInfoS). */
+function sauceArt(font: string): number[] {
+    const body = Buffer.from(`${CSI}0m\xb0\xb1\xb2\xdb \x80\x9b\xd5 SAUCE font: ${font}\r\n`, 'latin1');
+    const rec = Buffer.alloc(128, 0);
+    rec.write('SAUCE00', 0, 'latin1');
+    rec.writeUInt32LE(body.length, 90);
+    rec[94] = 1; // Character
+    rec[95] = 1; // ANSi
+    rec.writeUInt16LE(80, 96);
+    rec.writeUInt16LE(25, 98);
+    rec.write(font, 106, 'latin1');
+    return [...body, 0x1a, ...rec];
+}
+
+/** Show `sauceArt(font)`; `noAmiga` makes the Amiga fonts look uninstalled. */
+async function showSauceFont(page: Page, font: string, noAmiga = false) {
+    return page.evaluate(
+        async ([b, noAmiga]) => {
+            const t = (window as any).enigTerm;
+            if (noAmiga) t.fonts.amiga = null;
+            const info = await t.showSauceArt(new Uint8Array(b));
+            const c = t.core.core;
+            return { sauceFont: info.sauceFont, page: c.font_page(), cellPage: (c.row_cells(0)[0] >> 16) & 0xff, profile: t.activeProfile };
+        },
+        [sauceArt(font), noAmiga] as const,
+    );
+}
+
+test('SAUCE font names select our fonts: code pages, unknown names, Amiga fonts not installed', async ({ page }) => {
+    await open(page, '&profile=auto');
+    expect(await showSauceFont(page, 'IBM VGA 850')).toEqual({ sauceFont: { name: 'IBM VGA 850', slot: 18, height: 16 }, page: 18, cellPage: 18, profile: 'pc' });
+    expect(await showSauceFont(page, 'IBM EGA 866')).toMatchObject({ sauceFont: { slot: 25, height: 14 }, cellPage: 25 });
+    // Back to CP437 for the next file: the reset drops the previous selection.
+    expect(await showSauceFont(page, 'ibm  vga50')).toMatchObject({ sauceFont: { slot: 0, height: 8 }, cellPage: 0 });
+    expect(await showSauceFont(page, 'IBM VGA 737')).toMatchObject({ sauceFont: { slot: null }, cellPage: 0 });
+    expect(await showSauceFont(page, 'C64 PETSCII shifted')).toMatchObject({ sauceFont: { slot: null }, cellPage: 0 });
+    expect(await showSauceFont(page, 'Amiga Topaz 2+', true)).toEqual({ sauceFont: { name: 'Amiga Topaz 2+', slot: null, height: 8 }, page: 0, cellPage: 0, profile: 'pc' });
+});
+
+test('SAUCE Amiga font name selects the installed Amiga font (skipped when not installed)', async ({ page }) => {
+    await open(page);
+    test.skip(!(await amigaFontsInstalled(page)), 'no Amiga fonts (npm run fonts:amiga)');
+    expect(await showSauceFont(page, 'Amiga Topaz 2+')).toEqual({ sauceFont: { name: 'Amiga Topaz 2+', slot: 40, height: 8 }, page: 40, cellPage: 40, profile: 'amiga' });
+    expect(await showSauceFont(page, "Amiga mO'sOul")).toMatchObject({ sauceFont: { slot: 38 }, cellPage: 38 });
 });
 
 test('Latin-1 high half through slot 42 (licensed ISO-8859-1 stand-in); golden frame', async ({ page }, ti) => {
@@ -164,9 +211,9 @@ test('real ENiGMA art (local only: never committed)', async ({ page }, ti) => {
     test.skip(!art || !fs.existsSync(art), art ? `no art at ${art}` : 'set ENIGMA_ART to a piece of ANSI art');
     await open(page);
     const b64 = fs.readFileSync(art).toString('base64');
-    await page.evaluate(b => {
+    await page.evaluate(async b => {
         const t = (window as any).enigTerm;
-        t.showSauceArt(Uint8Array.from(atob(b), c => c.charCodeAt(0)));
+        await t.showSauceArt(Uint8Array.from(atob(b), c => c.charCodeAt(0)));
         t.renderFrame(true);
     }, b64);
     await shot(page, 'enigma-art', ti.project.name);

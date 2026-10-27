@@ -3,7 +3,7 @@
 import { CRT_DEFAULTS, type CrtSettings } from './crt.ts';
 import { EngineCore, loadCore, type TrapInfo } from './core.ts';
 import { AMIGA_ASPECT, checkEndpoint, type Options } from './config.ts';
-import { AMIGA_SLOTS, FontSelectScan, FontStore, modeHeight } from './fonts.ts';
+import { AMIGA_SLOTS, FontSelectScan, FontStore, modeHeight, sauceFont, sauceFontName } from './fonts.ts';
 import { amigaPalette } from './palettes.ts';
 import { charsetForFont, chunk, encode, fromLatin1, latin1, type Charset } from './encoding.ts';
 import { Input } from './input.ts';
@@ -1322,9 +1322,35 @@ export class Terminal {
         this.renderFrame(true);
     }
 
-    /** Show a SAUCE-tagged ANSI file locally. */
-    showSauceArt(bytes: Uint8Array): Record<string, unknown> {
-        const info = JSON.parse(this.core.call(c => c.load_sauce_art(bytes), '{}'));
+    /**
+     * Show a SAUCE-tagged ANSI file locally. The SAUCE font name selects our
+     * font of that code page or Amiga design (fetched first, at the mode's
+     * cell height); a name we have no font for, or a font that is not
+     * installed, leaves the default (slot 0).
+     */
+    async showSauceArt(bytes: Uint8Array): Promise<Record<string, unknown>> {
+        const name = sauceFontName(bytes);
+        const want = name ? sauceFont(name) : null;
+        let slot = want?.slot ?? null;
+        if (slot !== null && !this.core.hasFont(slot)) {
+            let timer = 0;
+            const timeout = new Promise<null>(r => (timer = window.setTimeout(() => r(null), FONT_WAIT_MS)));
+            const f = await Promise.race([this.fonts.font(slot, this.core.modeFontHeight), timeout]);
+            clearTimeout(timer);
+            try {
+                if (f) this.core.loadFont(slot, f.name, f.data);
+            } catch {
+                // Not drawable: the default font it is.
+            }
+            if (!this.core.hasFont(slot)) slot = null;
+        }
+        // The engine's own SAUCE font lookup finds nothing (no fonts compiled
+        // in), so the selection goes ahead of the art, after the core's reset.
+        const art = slot ? new Uint8Array([...fromLatin1(`${CSI}0;${slot} D`), ...bytes]) : bytes;
+        const info = JSON.parse(this.core.call(c => c.load_sauce_art(art), '{}'));
+        // Only the font selection matters here: the art's queries are not answered.
+        for (const ev of JSON.parse(this.core.call(c => c.take_events(), '[]')) as CoreEvent[]) if (ev.t === 'font') this.onEvent(ev);
+        info.sauceFont = name === null ? null : { name, slot, height: want?.height ?? null };
         this.renderFrame(true);
         return info;
     }
