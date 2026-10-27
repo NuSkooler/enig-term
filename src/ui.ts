@@ -1,7 +1,7 @@
 // The chrome around the screen, inside a shadow root: toolbar (host input,
 // connect, copy/paste, settings, full screen), the settings panel, the
 // on-screen key bar, notices and the link confirmation.
-import { saveUserSettings, userMayChange, USER_KEYS, type KeyBarMode, type Options, type UserSettings } from './config.ts';
+import { checkEndpoint, saveUserSettings, userMayChange, USER_KEYS, type KeyBarMode, type Options, type UserSettings } from './config.ts';
 import { STYLES } from './styles.ts';
 import type { ConnState, Terminal } from './terminal.ts';
 import { label, size, type TransferDirection, type TransferProtocol, type TransferStatus } from './transfers.ts';
@@ -107,6 +107,12 @@ const TEMPLATE = html`
     <p class="why" data-linkwhy hidden></p>
     <div class="actions"><button type="button" data-act="link-cancel">Cancel</button><button type="button" class="primary" data-act="link-open">Open link</button></div>
   </dialog>
+  <dialog data-connectdialog aria-labelledby="et-connect-h">
+    <h2 id="et-connect-h">Connect to this board?</h2>
+    <code class="url" data-connecturl></code>
+    <p class="why">The address came from the link that opened this page.</p>
+    <div class="actions"><button type="button" data-act="connect-cancel">Cancel</button><button type="button" class="primary" data-act="connect-ok">Connect</button></div>
+  </dialog>
 </div>`;
 
 /** Seconds as m:ss (or h:mm:ss). */
@@ -135,6 +141,7 @@ export class Chrome {
     private keyBarShown = false;
     private toastTimer = 0;
     private pendingLink = '';
+    private pendingConnect = '';
     private promptDismissed = false;
     /** Files chosen in the Files panel for the next upload. */
     private picked: File[] = [];
@@ -275,6 +282,14 @@ export class Chrome {
             this.closeLink();
             if (href) t.openLink(href);
         });
+        this.on('[data-act="connect-cancel"]', 'click', () => this.closeConnect());
+        this.on('[data-act="connect-ok"]', 'click', () => {
+            const ep = this.pendingConnect;
+            this.closeConnect();
+            if (!ep) return;
+            t.sound.prime();
+            t.connect(ep);
+        });
         this.showState(t.state, '');
     }
 
@@ -348,6 +363,30 @@ export class Chrome {
             d.setAttribute('open', '');
         }
         (allowed ? this.q<HTMLButtonElement>('[data-act="link-open"]') : this.q<HTMLButtonElement>('[data-act="link-cancel"]')).focus();
+    }
+
+    /** Ask before connecting to an endpoint the URL gave (see startAction in config.ts). */
+    confirmConnect(endpoint: string): void {
+        const d = this.q<HTMLDialogElement>('[data-connectdialog]');
+        this.pendingConnect = endpoint;
+        this.q('[data-connecturl]').textContent = checkEndpoint(endpoint, this.opts.allowInsecure).url;
+        try {
+            d.showModal();
+        } catch {
+            d.setAttribute('open', '');
+        }
+        this.q<HTMLButtonElement>('[data-act="connect-cancel"]').focus();
+    }
+
+    private closeConnect(): void {
+        const d = this.q<HTMLDialogElement>('[data-connectdialog]');
+        this.pendingConnect = '';
+        try {
+            d.close();
+        } catch {
+            d.removeAttribute('open');
+        }
+        this.terminal?.input.focus();
     }
 
     private closeLink(): void {

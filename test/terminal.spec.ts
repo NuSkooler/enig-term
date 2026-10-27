@@ -31,7 +31,7 @@ test('negotiation and connect probes against an ENiGMA-like host', async ({ page
     await expect(page.locator('enig-term').locator('[data-act="connect"]')).toHaveText('Reconnect');
 });
 
-test('host input dials; URL ?endpoint=&connect=1 works; the button reconnects', async ({ page }, ti) => {
+test('host input dials; URL ?endpoint=&connect=1 asks first; the button reconnects', async ({ page }, ti) => {
     const id = `dial-${ti.project.name}-${Date.now()}-${ti.repeatEachIndex}`;
     await open(page, `&endpoint=${encodeURIComponent('ws://127.0.0.1:' + new URL(page.url() || 'http://127.0.0.1:8090').port)}`);
     const host = page.locator('enig-term').locator('[data-host]');
@@ -57,6 +57,16 @@ test('host input dials; URL ?endpoint=&connect=1 works; the button reconnects', 
     const id2 = `url-${ti.project.name}-${Date.now()}-${ti.repeatEachIndex}`;
     await page2.goto(`/?blink=0&endpoint=${encodeURIComponent(fakeUrl(page, 'probe', id2))}&connect=1`);
     await page2.waitForFunction(() => document.body.dataset.ready === '1');
+    // An endpoint from the URL never connects by itself: the user is asked,
+    // with the host named and Cancel focused.
+    const ask = page2.locator('enig-term').locator('[data-connectdialog]');
+    await expect(ask).toBeVisible();
+    await expect(ask.locator('[data-connecturl]')).toContainText('/fake-bbs?script=probe');
+    await expect(ask.locator('[data-act="connect-cancel"]')).toBeFocused();
+    await page2.waitForTimeout(300);
+    expect(await page2.evaluate(() => (window as any).enigTerm.state)).toBe('idle');
+    expect(await fakeLog(page2, id2)).toEqual([]);
+    await ask.locator('[data-act="connect-ok"]').click();
     await waitState(page2, 'connected');
     expect(await page2.locator('enig-term').locator('[data-host]').inputValue()).toContain('/fake-bbs');
     await page2.close();
@@ -118,7 +128,10 @@ test('config.json: values apply, lockEndpoint and lock[] hold against URL and us
 
 test('panic recovery: the engine is replaced, the connection stays up', async ({ page }, ti) => {
     const id = `panic-${ti.project.name}-${Date.now()}-${ti.repeatEachIndex}`;
-    await open(page, '&debugPanic=1');
+    // The debug hooks are not URL parameters: a test sets them before the page loads.
+    await page.addInitScript(() => ((window as any).__enigTermTestHooks = { debugPanic: true }));
+    await open(page, '&debugPanic=1'); // ignored: proves a link cannot turn it on
+
     await page.evaluate(u => {
         const t = (window as any).enigTerm;
         (window as any).recovered = [];

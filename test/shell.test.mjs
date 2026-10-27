@@ -10,7 +10,7 @@ import { encode, cellToUnicode, chunk, charsetForFont } from '../src/encoding.ts
 import { mapKey, keySequence, ctrlChar } from '../src/keymap.ts';
 import { normalize, contains, selectionText, wordAt } from '../src/selection.ts';
 import { checkLink } from '../src/links.ts';
-import { sanitize, resolve, checkEndpoint, fromUrlParams, userMayChange, DEFAULTS } from '../src/config.ts';
+import { sanitize, resolve, checkEndpoint, fromUrlParams, userMayChange, startAction, DEFAULTS } from '../src/config.ts';
 import { ScrollbackView } from '../src/scrollback.ts';
 import { sauceFont, sauceFontName } from '../src/fonts.ts';
 
@@ -259,7 +259,35 @@ test('config: lockEndpoint and lock[] stop URL and user overrides', () => {
 test('config: URL parameter names (the v1 contract) map to options', () => {
     const { opts, hooks } = fromUrlParams(new URLSearchParams('endpoint=ws://127.0.0.1:18810&connect=1&crt=0&keys=on&naws=0&debugDa=cterm&bogus=1'));
     assert.deepEqual(sanitize(opts), { endpoint: 'ws://127.0.0.1:18810', autoConnect: true, crt: false, keyBar: 'on' });
-    assert.deepEqual(hooks, { naws: '0', debugDa: 'cterm' });
+    assert.deepEqual(hooks, { naws: '0' }, 'the debug hooks are never read from the URL');
+});
+
+test('config: the URL may not make a board more capable', () => {
+    const q = fromUrlParams(new URLSearchParams('zmodemDetect=auto&mute=0&volume=100&debugPanic=1&transferMaxFile=4096&sound=1&transfers=1'));
+    assert.deepEqual(q.opts, {});
+    assert.deepEqual(q.hooks, {});
+    // resolve() keeps to the same list even if handed more.
+    const o = resolve({ config: { zmodemDetect: 'off', mute: true }, page: { urlParams: true }, url: { zmodemDetect: 'auto', mute: false, volume: 100, crt: true } });
+    assert.equal(o.zmodemDetect, 'off');
+    assert.equal(o.mute, true);
+    assert.equal(o.volume, DEFAULTS.volume);
+    assert.equal(o.crt, true);
+});
+
+test('config: an endpoint from the URL never connects by itself', () => {
+    const run = layers => startAction(resolve({ ...layers, page: { urlParams: true, ...layers.page } }), layers);
+    // The operator's endpoint, autoConnect from anywhere: connect.
+    assert.equal(run({ config: { endpoint: 'wss://good', autoConnect: true } }), 'connect');
+    assert.equal(run({ config: { endpoint: 'wss://good' }, url: { autoConnect: true } }), 'connect');
+    assert.equal(run({ page: { endpoint: 'wss://good', autoConnect: true } }), 'connect');
+    // The URL's endpoint: ask, whoever asked for autoConnect.
+    assert.equal(run({ url: { endpoint: 'wss://evil', autoConnect: true } }), 'ask');
+    assert.equal(run({ config: { endpoint: 'wss://good', autoConnect: true }, url: { endpoint: 'wss://evil' } }), 'ask');
+    // ...unless lockEndpoint threw the URL's endpoint away.
+    assert.equal(run({ config: { endpoint: 'wss://good', autoConnect: true, lockEndpoint: true }, url: { endpoint: 'wss://evil' } }), 'connect');
+    // No autoConnect, or no endpoint: nothing.
+    assert.equal(run({ url: { endpoint: 'wss://evil' } }), null);
+    assert.equal(run({ url: { autoConnect: true } }), null);
 });
 
 test('endpoints: wss only, ws only for loopback or with allowInsecure', () => {
@@ -314,7 +342,7 @@ test('config: transfers, zmodemDetect and transferMaxFile; zmodemDetect is a use
     assert.deepEqual([DEFAULTS.transfers, DEFAULTS.zmodemDetect, DEFAULTS.transferMaxFile], [true, 'auto', 512]);
     assert.equal(userMayChange(resolve({}), 'zmodemDetect'), true);
     assert.equal(userMayChange(resolve({ config: { lock: ['zmodemDetect'] } }), 'zmodemDetect'), false);
-    assert.equal(fromUrlParams(new URLSearchParams('zmodemDetect=off')).opts.zmodemDetect, 'off');
+    assert.equal(fromUrlParams(new URLSearchParams('zmodemDetect=auto')).opts.zmodemDetect, undefined, 'not from the URL');
 });
 
 test('Telnet: every byte value survives escaping out and decoding in (transfers run above Telnet)', () => {

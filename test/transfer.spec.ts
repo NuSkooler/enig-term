@@ -17,9 +17,10 @@ const pad128 = (b: Buffer) => Buffer.concat([b, Buffer.alloc((128 - (b.length % 
 
 let seq = 0;
 
-/** Connect to the fake BBS running `peer`, and have it start the program. */
-async function board(page: Page, params: Record<string, string>, query = '') {
+/** Connect to the fake BBS running `peer`, and have it start the program. `detect`: zmodemDetect (not a URL parameter). */
+async function board(page: Page, params: Record<string, string>, query = '', detect: 'auto' | 'ask' | 'off' = 'auto') {
     await open(page, query);
+    await page.evaluate(d => (window as any).enigTerm.set('zmodemDetect', d), detect);
     const id = `xfer-${Date.now()}-${++seq}`;
     const q = Object.entries(params).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('');
     await page.evaluate(u => (window as any).enigTerm.connect(u), fakeUrl(page, `xfer${q}`, id));
@@ -206,7 +207,7 @@ test('ZModem upload prepared in the Files panel starts when the board does (10 M
 test('ZModem download, "ask first": the offer waits for Receive', async ({ page }) => {
     test.skip(!LRZSZ, 'lrzsz not installed');
     const dl = downloads(page);
-    const id = await board(page, { peer: 'sz', set: 'small' }, '&zmodemDetect=ask');
+    const id = await board(page, { peer: 'sz', set: 'small' }, '', 'ask');
     await expect.poll(() => phase(page), { timeout: 15_000 }).toBe('offer');
     await ui(page, '[data-act="xf-offer-accept"]').click();
     expect((await finished(page)).phase).toBe('done');

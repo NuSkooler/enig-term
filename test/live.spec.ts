@@ -2,7 +2,7 @@
 // instance, never the dev board). Skipped unless ENIG_TERM_LIVE_WS is set:
 //   ENIG_TERM_LIVE_WS=ws://127.0.0.1:18810 npm run test:live
 // The page is opened the way ENiGMA's /_enig/ws-term/ route documents it:
-// ?endpoint=<ws url>&connect=1. Logs and screenshots go to test/screenshots/
+// ?endpoint=<ws url>&connect=1 (and confirming the connection). Logs and screenshots go to test/screenshots/
 // (gitignored: they show the board's theme art).
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
@@ -16,15 +16,17 @@ const VARIANTS = [
     // ENiGMA only asks CSI 255 n when NAWS gave it no size.
     { name: 'no-naws', query: '&naws=0', note: 'NAWS refused: exercises CSI 999;999H + CSI 255 n' },
     // ENiGMA builds without enig-term support only send CSI = 6 n to CTerm.
-    { name: 'cterm-da', query: '&debugDa=cterm', note: 'test-only CTerm-shaped DA: exercises CSI = 6 n' },
+    { name: 'cterm-da', query: '', hooks: { debugCtermDa: true }, note: 'test-only CTerm-shaped DA: exercises CSI = 6 n' },
 ];
 
 for (const v of VARIANTS) test(`live ENiGMA (${v.name}): connect probes, pre-login screen`, async ({ page }, ti) => {
     test.skip(!WS, 'set ENIG_TERM_LIVE_WS to run');
     test.skip(ti.project.name !== 'chromium', 'live run on chromium only');
     test.setTimeout(90_000);
+    if ('hooks' in v) await page.addInitScript(h => ((window as any).__enigTermTestHooks = h), v.hooks);
     await page.goto(`/?blink=0&endpoint=${encodeURIComponent(WS!)}&connect=1${v.query}`);
     await page.waitForFunction(() => document.body.dataset.ready === '1');
+    await page.locator('enig-term').locator('[data-act="connect-ok"]').click();
 
     // Wait until data has flowed and the stream has been quiet for 3 s.
     let last = -1;

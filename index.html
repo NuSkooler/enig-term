@@ -15,8 +15,8 @@
 </head>
 <body>
   <!-- Standalone page: reads ./config.json if there is one (see docs/configuration.md),
-       URL parameters (endpoint, connect, ...) override it, and without an endpoint the
-       host input asks for one. -->
+       URL parameters (endpoint, connect, ...) override it (an endpoint from the URL asks
+       before connecting), and without an endpoint the host input asks for one. -->
   <enig-term config="config.json" url-params fill></enig-term>
   <noscript>enig-term needs JavaScript and WebAssembly.</noscript>
   <script type="module">

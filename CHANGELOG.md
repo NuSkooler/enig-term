@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- An endpoint from the page URL no longer connects by itself: the page asks
+  first, naming the address. A crafted link could otherwise point the
+  operator's own page at a hostile board. An endpoint from `config.json` or
+  the attributes still connects at once with `autoConnect`.
+- The URL can no longer set `zmodemDetect`, `mute` or `volume`, and the
+  `debugDa` and `debugPanic` test hooks are no longer URL parameters (tests
+  set `window.__enigTermTestHooks` instead).
+
 ## 0.1.1 - 2026-10-27
 
 - A ZModem upload of two small files, each with a damaged start, no longer

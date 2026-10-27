@@ -4,7 +4,9 @@
 
 `index.html` is `<enig-term config="config.json" url-params fill>`. It reads
 `./config.json` if there is one, and without an endpoint it asks for a host.
-On the standalone page only, URL parameters override `config.json`:
+On the standalone page only, URL parameters override `config.json`. A link
+can come from anyone, so the URL sets only these, nothing that lets a board do
+more (sound, ZModem auto-start, file sizes):
 
 | Parameter | Option |
 |---|---|
@@ -14,16 +16,25 @@ On the standalone page only, URL parameters override `config.json`:
 | `scale=fit\|integer`, `keys=auto\|on\|off`, `profile=auto\|pc\|amiga` | `scale`, `keyBar`, `profile` |
 | `amigaPalette=ncomm\|term-ega`, `amigaAspect=pal\|ntsc\|<1-3>`, `amigaRows=` | the same |
 | `cols=`, `rows=`, `scrollback=`, `renderer=webgl2\|2d`, `autoReconnect=0/1` | the same |
-| `mute=0/1`, `volume=0-100`, `musicTone=square\|syncterm\|sine` | the same |
-| `zmodemDetect=auto\|ask\|off` | the same |
+| `musicTone=square\|syncterm\|sine` | the same |
+
+An endpoint from the URL never connects by itself, whatever sets
+`autoConnect`: the page asks first ("Connect to this board?", naming the
+address, Cancel focused), so a crafted link cannot point the operator's page
+at another board. `connect=1` with the endpoint from `config.json` (or the
+attributes) connects at once.
 
 There are also test hooks, never on by default:
 
 - `naws=0` refuses NAWS, so a host falls back to `CSI 255 n`.
-- `debugDa=cterm` answers DA as CTerm, for ENiGMA builds that only probe CTerm.
-- `debugPanic=1` lets `CSI ? 2026 h` panic the engine, to exercise recovery.
 - `audioLock=1` behaves as if the browser refused audio until a gesture.
 - `audioFallback=1` decodes Ogg with the bundled decoders.
+
+The debug hooks are not URL parameters. A test sets them in the page before
+the terminal loads, e.g. with Playwright's `page.addInitScript`:
+`window.__enigTermTestHooks = { debugCtermDa: true, debugPanic: true }`.
+`debugCtermDa` answers DA as CTerm, for ENiGMA builds that only probe CTerm;
+`debugPanic` lets `CSI ? 2026 h` panic the engine, to exercise recovery.
 
 ## config.json v1
 
@@ -86,9 +97,9 @@ Lowest first:
 1. built-in defaults;
 2. `config.json`;
 3. element attributes, or `mount()` options (the embedding page);
-4. URL parameters, only when `urlParams` is on (the standalone page), and
-   never for `endpoint` when `lockEndpoint` is set, nor for `lock`,
-   `lockEndpoint`, `urlParams`, `allowInsecure`, `linkSchemes` or a locked key;
+4. URL parameters, only when `urlParams` is on (the standalone page), only
+   for the keys in the table above, never for `endpoint` when `lockEndpoint`
+   is set, and never for a locked key;
 5. user settings saved in `localStorage`, only for the user-settable keys and
    only those not in `lock`.
 
