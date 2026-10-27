@@ -200,3 +200,71 @@ export class FontSelectScan {
         return null;
     }
 }
+
+/** What a SAUCE font name (TInfoS) asks for: our SyncTERM font, or null for the default (slot 0). */
+export interface SauceFont {
+    /** SyncTERM font number to select, or null: we have no such font (the default is used). */
+    slot: number | null;
+    /** Cell height the name implies (VGA 16, VGA50 8, VGA25G 19, EGA 14, EGA43 8, Amiga 8). */
+    height: number | null;
+}
+
+/** SAUCE code page suffix -> our font of that code page (the plain, not "thin", variant). */
+const SAUCE_CODEPAGES: Record<string, number> = {
+    '437': 0,
+    '819': 24, // ISO-8859-1
+    '850': 18,
+    '858': 18, // CP850 with the euro at 0xD5: drawn with CP850 (dotless i there)
+    '865': 28,
+    '866': 25,
+};
+
+const SAUCE_PC_HEIGHTS: Record<string, number> = { vga: 16, vga50: 8, vga25g: 19, ega: 14, ega43: 8 };
+
+/**
+ * Amiga SAUCE names, lower case with everything but letters, digits and "+"
+ * dropped and 0 read as o ("P0T-NOoDLE", "mO'sOul"). Topaz 1 and 2 are
+ * whichever Kickstart's Topaz the operator installed.
+ */
+const SAUCE_AMIGA: Record<string, number> = {
+    topaz1: 42,
+    topaz2: 42,
+    topaz: 42,
+    'topaz1+': 40,
+    'topaz2+': 40,
+    'topaz+': 40,
+    potnoodle: 37,
+    microknight: 41,
+    'microknight+': 39,
+    mosoul: 38,
+};
+
+/**
+ * Map a SAUCE font name (the spec's TInfoS list: "IBM VGA", "IBM EGA43 850",
+ * "Amiga Topaz 2+", ...) to one of our fonts. Case, spacing and the usual
+ * spelling variants are ignored. Code pages and designs we do not have (737,
+ * 852, C64 PETSCII, Atari ATASCII, unknown names) give slot null.
+ */
+export function sauceFont(name: string): SauceFont {
+    const n = name.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    const pc = /^ibm ?(vga ?50|vga ?25g|vga|ega ?43|ega)(?: (\w+))?$/.exec(n);
+    if (pc) {
+        const slot = SAUCE_CODEPAGES[pc[2] ?? '437'];
+        return { slot: slot ?? null, height: SAUCE_PC_HEIGHTS[pc[1].replace(' ', '')] };
+    }
+    const amiga = n.replace(/[^a-z0-9+]/g, '').replace(/0/g, 'o').replace(/plus$/, '+');
+    const slot = SAUCE_AMIGA[amiga.replace(/^amiga/, '')];
+    return slot === undefined ? { slot: null, height: null } : { slot, height: 8 };
+}
+
+/** The font name (TInfoS) of a file's SAUCE record, for character and binary text files; null without one. */
+export function sauceFontName(file: Uint8Array): string | null {
+    if (file.length < 128) return null;
+    const rec = file.subarray(file.length - 128);
+    if (String.fromCharCode(...rec.subarray(0, 7)) !== 'SAUCE00') return null;
+    if (rec[94] !== 1 && rec[94] !== 5) return null; // DataType: Character or BinaryText
+    const s = rec.subarray(106, 128);
+    const end = s.indexOf(0);
+    const name = String.fromCharCode(...(end < 0 ? s : s.subarray(0, end))).trim();
+    return name || null;
+}

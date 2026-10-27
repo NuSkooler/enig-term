@@ -1,6 +1,6 @@
 // Unit tests for the TS shell modules that need no DOM: Telnet negotiation,
 // host-query replies, the keymap, encodings, selection text, the link policy,
-// config precedence and the scrollback controller. Node 22 strips the types.
+// config precedence, the scrollback controller and SAUCE font names. Node 22 strips the types.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -12,6 +12,7 @@ import { normalize, contains, selectionText, wordAt } from '../src/selection.ts'
 import { checkLink } from '../src/links.ts';
 import { sanitize, resolve, checkEndpoint, fromUrlParams, userMayChange, DEFAULTS } from '../src/config.ts';
 import { ScrollbackView } from '../src/scrollback.ts';
+import { sauceFont, sauceFontName } from '../src/fonts.ts';
 
 const DO = 253, DONT = 254, WILL = 251, WONT = 252, SB = 250, SE = 240;
 const CSI = ESC + '[';
@@ -326,4 +327,73 @@ test('Telnet: every byte value survives escaping out and decoding in (transfers 
     const a = t.receive(wire.subarray(0, cut));
     const b = t.receive(wire.subarray(cut));
     assert.deepEqual(Array.from([...a.data, ...b.data]), Array.from(data));
+});
+
+// --- SAUCE font names --------------------------------------------------------
+
+test('SAUCE fonts: IBM names map to our font of that code page, with the height they name', () => {
+    assert.deepEqual(sauceFont('IBM VGA'), { slot: 0, height: 16 });
+    assert.deepEqual(sauceFont('IBM VGA50'), { slot: 0, height: 8 });
+    assert.deepEqual(sauceFont('IBM VGA25G'), { slot: 0, height: 19 });
+    assert.deepEqual(sauceFont('IBM EGA'), { slot: 0, height: 14 });
+    assert.deepEqual(sauceFont('IBM EGA43'), { slot: 0, height: 8 });
+    assert.deepEqual(sauceFont('IBM VGA 437'), { slot: 0, height: 16 });
+    assert.deepEqual(sauceFont('IBM VGA 850'), { slot: 18, height: 16 });
+    assert.deepEqual(sauceFont('IBM VGA50 858'), { slot: 18, height: 8 });
+    assert.deepEqual(sauceFont('IBM EGA 865'), { slot: 28, height: 14 });
+    assert.deepEqual(sauceFont('IBM EGA43 866'), { slot: 25, height: 8 });
+    assert.deepEqual(sauceFont('IBM VGA25G 819'), { slot: 24, height: 19 });
+});
+
+test('SAUCE fonts: case, spacing, underscores and hyphens do not matter', () => {
+    for (const n of ['ibm vga 850', 'IBM  VGA  850', ' IBM VGA 850 ', 'IBM_VGA_850', 'IBM-VGA-850', 'IBMVGA 850']) assert.deepEqual(sauceFont(n), { slot: 18, height: 16 }, n);
+    assert.deepEqual(sauceFont('ibm vga 50'), { slot: 0, height: 8 });
+    assert.deepEqual(sauceFont('IBM EGA 43 866'), { slot: 25, height: 8 });
+    assert.deepEqual(sauceFont('ibm vga25g'), { slot: 0, height: 19 });
+});
+
+test('SAUCE fonts: Amiga names, in the spellings seen in the wild', () => {
+    const want = {
+        'Amiga Topaz 1': 42,
+        'Amiga Topaz 2': 42,
+        'Amiga Topaz 1+': 40,
+        'Amiga Topaz 2+': 40,
+        'amiga topaz 2 plus': 40,
+        'Amiga P0T-NOoDLE': 37,
+        'Amiga Pot-Noodle': 37,
+        'AMIGA P0T NOODLE': 37,
+        'Amiga MicroKnight': 41,
+        'Amiga MicroKnight+': 39,
+        'Amiga Micro Knight Plus': 39,
+        'Amiga mOsOul': 38,
+        "Amiga mO'sOul": 38,
+        'Amiga MOSOUL': 38,
+        Topaz: 42,
+    };
+    for (const [n, slot] of Object.entries(want)) assert.deepEqual(sauceFont(n), { slot, height: 8 }, n);
+});
+
+test('SAUCE fonts: code pages and machines we have no font for, and unknown names, give the default', () => {
+    for (const n of ['IBM VGA 737', 'IBM EGA 852', 'IBM VGA 872', 'IBM VGA MIK', 'IBM VGA KAM', 'IBM VGA50 MAZ']) assert.equal(sauceFont(n).slot, null, n);
+    assert.equal(sauceFont('IBM VGA 737').height, 16, 'the height is still known');
+    for (const n of ['C64 PETSCII unshifted', 'C64 PETSCII shifted', 'Atari ATASCII', 'Amiga Topaz 3', 'Terminus', '', '   ', 'IBM CGA']) {
+        assert.deepEqual(sauceFont(n), { slot: null, height: null }, n);
+    }
+});
+
+test('SAUCE fonts: the name is read from the record of character and binary text files only', () => {
+    const file = (font, dataType = 1, id = 'SAUCE00') => {
+        const rec = new Uint8Array(128);
+        rec.set(codes(id), 0);
+        rec[94] = dataType;
+        rec.set(codes(font), 106);
+        return new Uint8Array([...codes('art'), 0x1a, ...rec]);
+    };
+    assert.equal(sauceFontName(file('IBM VGA 850')), 'IBM VGA 850');
+    assert.equal(sauceFontName(file('Amiga Topaz 2+', 5)), 'Amiga Topaz 2+');
+    assert.equal(sauceFontName(file('A'.repeat(22))), 'A'.repeat(22), 'all 22 bytes, no terminator');
+    assert.equal(sauceFontName(file('IBM VGA', 2)), null, 'Bitmap: TInfoS is not a font name');
+    assert.equal(sauceFontName(file('')), null);
+    assert.equal(sauceFontName(file('IBM VGA', 1, 'SAUCE01')), null);
+    assert.equal(sauceFontName(new Uint8Array(100)), null);
 });
