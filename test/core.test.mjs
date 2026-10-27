@@ -425,3 +425,43 @@ test('fast line-moving scroll matches the engine cell-by-cell scroll (fuzzed)', 
     }
     assert.equal(fast.scrollback_len(), slow.scrollback_len());
 });
+
+test('nested CTerm macros expand within a budget per top-level invocation (patch 0002)', () => {
+    const hex = s => [...s].map(ch => ch.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    // Macro 3 prints "x"; macros 2, 1 and 0 each run the next one 255 times: 16.6 million "x"s from about 110 bytes.
+    let p = `${ESC}P3;0;1!z${hex('x')}${ST}`;
+    for (let d = 2; d >= 0; d--) p += `${ESC}P${d};0;1!z!255;${hex(`${ESC}[${d + 1}*z`)};${ST}`;
+    const c = new Core(80, 25, 'ansi');
+    c.feed(bytes(p));
+    const t = performance.now();
+    c.feed(bytes(`${CSI}0*z`));
+    // (About 0.2 s alone; the limit leaves room for a busy machine. Without the budget this never returns.)
+    assert.ok(performance.now() - t < 10000, `${(performance.now() - t).toFixed(0)} ms`);
+    // The budget is per invocation: a small nested macro still expands in full afterwards.
+    c.feed(bytes(`${ESC}P4;0;1!z!3;${hex(`${ESC}[3*z`)};${ST}${CSI}H${CSI}2J${CSI}4*z`));
+    assert.equal(c.cursor_x(), 3);
+});
+
+test('decoded sixel images on a screen stay within a budget (oldest evicted)', async () => {
+    const { Core: Fresh, memory: mem } = await loadCore({ fresh: true });
+    const c = new Fresh(80, 25, 'ansi');
+    // 4000 x 1200 pixels, 19.2 MB of RGBA each, from about 1.6 KB of sixel.
+    const one = `${ESC}Pq#0!4000~${'-!4000~'.repeat(199)}${ST}`;
+    c.feed(bytes(`${CSI}H${one}`));
+    const before = mem.buffer.byteLength;
+    for (let i = 1; i < 20; i++) c.feed(bytes(`${CSI}${(i % 20) + 1};${(i % 70) + 1}H${one}`));
+    const grew = (mem.buffer.byteLength - before) / 2 ** 20;
+    assert.ok(grew < 160, `WASM memory grew ${grew.toFixed(0)} MB for 20 images of 19.2 MB`);
+});
+
+test('a screen keeps at most 4096 sixel images, however small (the list is scanned for every new one)', () => {
+    const c = new Core(80, 25, 'ansi');
+    // 6000 images of 1 to 3 pixels: at one cell a narrower image does not cover the wider one before it,
+    // so nothing is dropped as shadowed. 6000 x 4 bytes of pixels is far under the byte budget.
+    const parts = [];
+    for (let w = 3; w >= 1; w--) for (let y = 1; y <= 25; y++) for (let x = 1; x <= 80; x++) parts.push(`${CSI}${y};${x}H${ESC}Pq#0!${w}~${ST}`);
+    const t = performance.now();
+    for (let i = 0; i < parts.length; i += 500) c.feed(bytes(parts.slice(i, i + 500).join('')));
+    assert.equal(c.sixel_count(), 4096);
+    assert.ok(performance.now() - t < 5000, `${(performance.now() - t).toFixed(0)} ms`);
+});

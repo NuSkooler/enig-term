@@ -17,10 +17,14 @@
 //! `scroll_up` sees every scroll. Everything `TextScreen` implements itself is
 //! forwarded unchanged (delegate.rs, generated), except the handful of methods
 //! below.
+//!
+//! It also bounds the decoded sixel images a screen holds (`add_sixel`):
+//! icy_engine caps one image, but keeps every image that is not completely
+//! covered by a later one.
 
 use std::collections::{HashMap, VecDeque};
 
-use icy_engine::{AttributedChar, EditableScreen, Line, Position, Screen, TextPane, TextScreen};
+use icy_engine::{AttributedChar, EditableScreen, Line, Position, Screen, Sixel, TextPane, TextScreen};
 
 /// One line of scrollback: the cells as they were when the line left the screen.
 pub struct ScrollLine {
@@ -44,6 +48,17 @@ pub const DEFAULT_SCROLLBACK_LINES: usize = 2000;
 const MAX_LINKS: usize = 8192;
 /// Longest URL we keep.
 const MAX_URL_LEN: usize = 2048;
+
+/// Decoded sixel pixels (RGBA bytes) one screen keeps. A new image evicts the
+/// oldest until the rest fit; an image larger than this alone is dropped.
+/// (icy_engine allows 256 MB per image, and a few KB of sixel decode to that.)
+pub const SIXEL_BUDGET: usize = 64 << 20;
+
+/// Decoded sixel images one screen keeps, however small. The byte budget
+/// counts pixels only, and icy_engine scans the whole list for every new
+/// image, so thousands of tiny images that do not cover each other would
+/// otherwise cost time quadratic in their number.
+pub const SIXEL_MAX_IMAGES: usize = 4096;
 
 impl LinkTable {
     pub fn intern(&mut self, url: &str) -> u32 {
@@ -385,6 +400,27 @@ impl CaptureScreen {
         self.scrollback.clear();
         self.inner.clear_scrollback();
     }
+
+    /// Sixel images the screen holds (tests, diagnostics).
+    pub fn sixel_count(&self) -> usize {
+        self.inner.buffer.layers[0].sixels.len()
+    }
+
+    pub(crate) fn capture_add_sixel(&mut self, pos: Position, sixel: Sixel) {
+        if sixel.picture_data.len() > SIXEL_BUDGET {
+            return;
+        }
+        // TextScreen::add_sixel drops the images the new one covers, then appends it.
+        self.inner.add_sixel(pos, sixel);
+        let images = &mut self.inner.buffer.layers[0].sixels;
+        let mut total: usize = images.iter().map(|s| s.picture_data.len()).sum();
+        let mut evict = 0;
+        while (total > SIXEL_BUDGET || images.len() - evict > SIXEL_MAX_IMAGES) && evict + 1 < images.len() {
+            total -= images[evict].picture_data.len();
+            evict += 1;
+        }
+        images.drain(..evict);
+    }
 }
 
 /// Bodies of the methods CaptureScreen implements itself, spliced into the
@@ -415,6 +451,9 @@ macro_rules! icy_capture_overrides {
         }
         fn scroll_right(&mut self) {
             self.capture_scroll_horizontal(false)
+        }
+        fn add_sixel(&mut self, pos: Position, sixel: icy_engine::Sixel) {
+            self.capture_add_sixel(pos, sixel)
         }
     };
 }

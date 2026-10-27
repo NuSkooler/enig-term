@@ -274,6 +274,63 @@ async function decodeAll(page: Page, fallback: boolean) {
     );
 }
 
+/** One Ogg page (enig-term's reader does not check the CRC, so it is left 0). */
+function oggPage(seq: number, granule: number, packets: Buffer[], flags = 0) {
+    const lacing: number[] = [];
+    for (const p of packets) {
+        let n = p.length;
+        while (n >= 255) {
+            lacing.push(255);
+            n -= 255;
+        }
+        lacing.push(n);
+    }
+    const h = Buffer.alloc(27 + lacing.length);
+    h.write('OggS', 0, 'latin1');
+    h[5] = flags;
+    h.writeUInt32LE(granule >>> 0, 6);
+    h.writeUInt32LE(1, 14);
+    h.writeUInt32LE(seq, 18);
+    h[26] = lacing.length;
+    lacing.forEach((l, i) => (h[27 + i] = l));
+    return Buffer.concat([h, ...packets]);
+}
+
+/** A long 8-channel Ogg Opus file: 8 uncoupled streams, each the fixture's audio packets over and over. */
+function longOpus(fixture: Buffer, packets: number) {
+    // The fixture's audio packets (one frame each, under 252 bytes): pages 2 on.
+    const audio: Buffer[] = [];
+    for (let off = 0, page = 0; off < fixture.length; page++) {
+        const nseg = fixture[off + 26];
+        let p = off + 27 + nseg;
+        for (let i = 0; i < nseg; i++) {
+            const len = fixture[off + 27 + i];
+            if (page >= 2 && len > 0) audio.push(fixture.subarray(p, p + len));
+            p += len;
+        }
+        off = p;
+    }
+    const head = Buffer.alloc(29);
+    head.write('OpusHead', 0, 'latin1');
+    head[8] = 1;
+    head[9] = 8;
+    head.writeUInt32LE(48000, 12);
+    head[18] = 255;
+    head[19] = 8;
+    for (let i = 0; i < 8; i++) head[21 + i] = i;
+    const pages = [oggPage(0, 0, [head], 2), oggPage(1, 0, [Buffer.from('OpusTags\0\0\0\0\0\0\0\0', 'latin1')])];
+    // Every stream's packet but the last is self-delimited: TOC, length, data.
+    const delimited = (a: Buffer) => Buffer.concat([a.subarray(0, 1), Buffer.from([a.length - 1]), a.subarray(1)]);
+    for (let i = 0, seq = 2; i < packets; i += 20, seq++) {
+        const batch = Array.from({ length: 20 }, (_, k) => {
+            const a = audio[(i + k) % audio.length];
+            return Buffer.concat([...Array.from({ length: 7 }, () => delimited(a)), a]);
+        });
+        pages.push(oggPage(seq, 0xffffffff, batch));
+    }
+    return Buffer.concat(pages);
+}
+
 test.describe('formats', () => {
     test.beforeEach(async ({ page }) => open(page));
 
@@ -301,6 +358,94 @@ test.describe('formats', () => {
         }
         // Only Ogg goes to them: the others still decode natively.
         expect(r['wav-16.wav'].fallback).toBe(false);
+    });
+
+    test('the bundled Ogg decoders run in a Worker: the page stays responsive, and a decode past decodeMs is stopped', async ({ page }) => {
+        // A few seconds of decoding on one thread (more than 10 s with 15000 packets on a busy Firefox, which then
+        // ran into the 20 s limit of the second run): 8 Opus streams of 4000 packets each.
+        const file = longOpus(fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')), 4000).toString('base64');
+        const r = await page.evaluate(async b64 => {
+            const m = await import('/enig-term-audio.js' as string);
+            const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const ctx = new OfflineAudioContext(1, 48000, 48000);
+            const run = async (decodeMs: number) => {
+                const e = new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs, musicTone: 'square', forceFallback: true, clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 }));
+                // The longest gap between timer ticks is how long the page was blocked.
+                let gap = 0;
+                let last = performance.now();
+                const tick = setInterval(() => {
+                    const n = performance.now();
+                    gap = Math.max(gap, n - last);
+                    last = n;
+                }, 20);
+                const t = performance.now();
+                const buf = await e.decode(bytes);
+                const ms = performance.now() - t;
+                gap = Math.max(gap, performance.now() - last);
+                clearInterval(tick);
+                return { ok: !!buf, channels: buf ? (buf.data as AudioBuffer).numberOfChannels : 0, ms, gap, stats: { ...e.stats } };
+            };
+            return { stopped: await run(300), full: await run(20000) };
+        }, file);
+        // Stopped at decodeMs, without waiting for the decode and without blocking the page.
+        expect(r.stopped.ms, JSON.stringify(r.stopped)).toBeLessThan(1500);
+        expect(r.stopped.gap, JSON.stringify(r.stopped)).toBeLessThan(250);
+        expect(r.stopped.ok).toBe(false);
+        expect(r.stopped.stats.decodeTimeouts).toBe(1);
+        // Given time, the same file decodes there (8 channels, the budget's worth).
+        expect(r.full.ok && r.full.stats.workerDecodes === 1, JSON.stringify(r.full)).toBe(true);
+        expect(r.full.channels).toBe(8);
+    });
+
+    test('a session reset terminates a decode running in a Worker', async ({ page }) => {
+        const file = longOpus(fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')), 4000).toString('base64');
+        const r = await page.evaluate(async b64 => {
+            const m = await import('/enig-term-audio.js' as string);
+            const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const ctx = new OfflineAudioContext(1, 48000, 48000);
+            let terminated = 0;
+            const terminate = Worker.prototype.terminate;
+            Worker.prototype.terminate = function (this: Worker) {
+                terminated++;
+                return terminate.call(this);
+            };
+            const e = new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 20000, musicTone: 'square', forceFallback: true, clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 }));
+            const t = performance.now();
+            const p = e.decode(bytes);
+            await new Promise(res => setTimeout(res, 300));
+            const before = terminated;
+            e.reset();
+            const ok = !!(await p);
+            Worker.prototype.terminate = terminate;
+            return { ok, before, terminated, ms: performance.now() - t, stats: { ...e.stats } };
+        }, file);
+        expect(r.before).toBe(0);
+        expect(r.terminated).toBe(1);
+        expect(r.ok).toBe(false);
+        // The decode takes seconds; the reset ended it at once.
+        expect(r.ms, JSON.stringify(r)).toBeLessThan(1500);
+        expect(r.stats.workerDecodes + r.stats.decodeTimeouts).toBe(0);
+    });
+
+    test('a Worker that fails to start is tried again on a later decode; after 3 failures in a row the decoders run on the page', async ({ page }) => {
+        const file = fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')).toString('base64');
+        const r = await page.evaluate(async b64 => {
+            const m = await import('/enig-term-audio.js' as string);
+            const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const ctx = new OfflineAudioContext(1, 48000, 48000);
+            const run = async (fails: number) => {
+                const e = new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 10000, musicTone: 'square', forceFallback: true, clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 }));
+                // The decoders' script cannot be fetched (offline, say): no Worker starts, nor does the import.
+                e.opts.oggUrl = new URL('/no-such-ogg.js', location.href).href;
+                for (let i = 0; i < fails; i++) await e.decode(bytes);
+                e.opts.oggUrl = undefined;
+                const ok = !!(await e.decode(bytes));
+                return { ok, stats: { ...e.stats } };
+            };
+            return { once: await run(1), thrice: await run(3) };
+        }, file);
+        expect(r.once.ok && r.once.stats.workerDecodes === 1, JSON.stringify(r.once)).toBe(true);
+        expect(r.thrice.ok && r.thrice.stats.workerDecodes === 0 && r.thrice.stats.fallbackDecodes === 1, JSON.stringify(r.thrice)).toBe(true);
     });
 });
 
@@ -435,6 +580,71 @@ test.describe('shell', () => {
         await expect(page.locator('[data-soundcache]')).toHaveText(/Cleared 1 file/);
         await write(page, `${APC}SyncTERM:C;L${ST}`);
         await expect.poll(() => sentText(page)).toContain(`${APC}SyncTERM:C;L\n${ST}`);
+    });
+
+    test('the cache in IndexedDB: a board keeps at most maxFiles, and another tab\'s stores are counted before evicting', async ({ page }) => {
+        await open(page);
+        const r = await page.evaluate(async () => {
+            const m = await import('/enig-term-audio.js' as string);
+            const ctx = new OfflineAudioContext(2, 4800, 48000);
+            const mk = () => new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 5000, musicTone: 'square', clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 })).store;
+            const a = mk();
+            const b = mk();
+            await a.clear();
+            a.limits.maxFiles = b.limits.maxFiles = 10;
+            const one = new Uint8Array([1]);
+            // b reads the index first (one file of its own board), then a fills board 'q'.
+            await b.put('other', 'x', one);
+            await b.flushed();
+            for (let i = 0; i < 25; i++) await a.put('q', `a${i}`, one);
+            await a.flushed();
+            const afterA = (await a.list('q')).length;
+            // The BroadcastChannel message.
+            await new Promise(res => setTimeout(res, 300));
+            // b stores 3 more on 'q': it must see a's 10, so 'q' stays at 10 on disk.
+            for (let i = 0; i < 3; i++) await b.put('q', `b${i}`, one);
+            await b.flushed();
+            const fresh = mk(); // a new page: only what is in IndexedDB
+            const disk = (await fresh.list('q')).map((e: { name: string }) => e.name);
+            const usage = await fresh.usage();
+            await fresh.clear();
+            return { persistent: a.persistent && b.persistent, afterA, disk, usage };
+        });
+        expect(r.persistent).toBe(true);
+        expect(r.afterA).toBe(10);
+        expect(r.disk.length).toBe(10);
+        expect(r.disk).toEqual(expect.arrayContaining(['b0', 'b1', 'b2', 'a24']));
+        expect(r.usage).toEqual({ files: 11, bytes: 11 });
+    });
+
+    test('a store that fails while its transaction is open leaves no meta row without data', async ({ page }) => {
+        await open(page);
+        const r = await page.evaluate(async () => {
+            const m = await import('/enig-term-audio.js' as string);
+            const ctx = new OfflineAudioContext(2, 4800, 48000);
+            const mk = () => new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 5000, musicTone: 'square', clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 })).store;
+            const s = mk();
+            await s.clear();
+            const one = new Uint8Array([1]);
+            await s.put('q', 'ok', one);
+            await s.flushed();
+            const orig = IDBObjectStore.prototype.put;
+            // The data request throws after the meta request was made.
+            IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: unknown[]) {
+                if (this.name === 'data') throw new DOMException('refused', 'DataError');
+                return (orig as (...a: unknown[]) => IDBRequest).apply(this, args);
+            } as typeof orig;
+            await s.put('q', 'bad', one);
+            await s.flushed();
+            IDBObjectStore.prototype.put = orig;
+            const disk = (await mk().list('q')).map((e: { name: string }) => e.name);
+            const usage = await mk().usage();
+            await mk().clear();
+            return { persistent: s.persistent, disk, usage };
+        });
+        expect(r.persistent).toBe(false);
+        expect(r.disk).toEqual(['ok']);
+        expect(r.usage).toEqual({ files: 1, bytes: 1 });
     });
 
     test('sound off: no audio answers at all', async ({ page }) => {

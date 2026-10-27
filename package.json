@@ -20,7 +20,7 @@
     "build": "npm run build:wasm && npm run build:js",
     "typecheck": "tsc --noEmit",
     "serve": "node scripts/serve.mjs",
-    "test:unit": "node --test test/core.test.mjs test/fonts.test.mjs test/shell.test.mjs test/fonts-tools.test.mjs test/audio-core.test.mjs test/audio.test.mjs test/xymodem.test.mjs test/zmodem.test.mjs test/transfer.test.mjs",
+    "test:unit": "node --test test/core.test.mjs test/fonts.test.mjs test/shell.test.mjs test/fonts-tools.test.mjs test/audio-core.test.mjs test/audio.test.mjs test/ogg.test.mjs test/xymodem.test.mjs test/zmodem.test.mjs test/transfer.test.mjs",
     "test:browser": "playwright test",
     "test": "npm run typecheck && npm run test:unit && npm run test:browser",
     "test:live": "playwright test --project=chromium test/live.spec.ts",

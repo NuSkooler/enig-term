@@ -37,7 +37,7 @@ function globSource(glob: string, classes: boolean): string {
 }
 
 function escape(c: string): string {
-    return /[.+^${}()|[\]\\/]/.test(c) ? '\\' + c : c;
+    return /[.+*?^${}()|[\]\\/]/.test(c) ? '\\' + c : c;
 }
 
 /**

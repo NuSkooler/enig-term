@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-10-27
+
+Security release. A review of 0.1.0 found that a crafted link could point
+an operator's own page at a hostile board, and that a board could freeze or
+crash the tab in several ways. Everything below is fixed, and a few
+defaults change: an endpoint from the URL asks before connecting, and
+ZModem downloads wait for a click.
 
 - An endpoint from the page URL no longer connects by itself: the page asks
   first, naming the address. A crafted link could otherwise point the
@@ -39,6 +45,53 @@
   refused even when `linkSchemes` lists them, and Cancel, not Open, has the
   focus in the link confirmation. docs/embedding.md now says a `link`
   handler that calls `preventDefault()` must check `allowed`.
+- A new session terminates a decode still running in a Worker, instead of
+  letting it run on for up to 15 s.
+- A decode Worker that fails to load is tried again on a later decode.
+  One failure (a failed fetch while offline, say) used to move the bundled
+  Ogg decoders to the page's thread, without the 15 s stop, until the page
+  closed; now that takes 3 failures in a row.
+- A cache store whose IndexedDB request throws midway aborts its
+  transaction; the half that was made (a listed file with no data) is no
+  longer committed.
+- The audio cache keeps at most 4096 files per board, dropping the least
+  recently used, and a `C;S` store no longer reads and sorts every stored
+  file: the cache keeps its index in memory, read from IndexedDB once. A
+  board storing 16000 tiny files with distinct names took about 10 s of the
+  page's thread; it now takes about 0.2 s. Tabs
+  sharing the cache tell each other when they store, and the index is read
+  again before the next store.
+- The bundled Ogg decoders refuse a file of more than 8 channels, and stop
+  decoding once the PCM (samples x channels x 4 bytes) would pass
+  `audioMemory`. A half-megabyte Opus file claiming 255 channels froze the
+  tab for seconds and took gigabytes of memory. An Opus file with more than
+  8 streams is refused too: every stream is decoded whether or not a channel
+  uses it, so 255 streams made each second of audio 255 times as costly.
+- The Ogg page reader skips empty packets and refuses a file of more than
+  262144 pages or packets. 16 MB of empty pages made 15 million packets
+  (36 s, about 3 GB), and a Vorbis file of many small packets overflowed
+  the stack.
+- The bundled Ogg decoders run in a module Worker, terminated when a decode
+  passes the 15 s limit, so a slow or hostile file no longer blocks the page.
+  Under a Content Security Policy the Worker needs `worker-src 'self'` (the
+  default when `script-src` allows the page's origin). Where no Worker can
+  start, they run on the page's thread as before.
+- Releases are built by a read-only job with no build cache and
+  `cargo --locked`, then attested (build provenance) and published by
+  separate jobs. Check a download with
+  `gh attestation verify enig-term-0.2.0.zip --repo NuSkooler/enig-term`.
+- Nested CTerm macros expand at most 4 MB of macro text per top-level
+  invocation (icy_tools patch 0002, upstream PR mkrueger/icy_tools#197).
+  About 100 bytes of macros that invoke each other hung the tab for good.
+- A screen keeps at most 64 MB of decoded sixel images: a new image evicts
+  the oldest, and one larger than that alone is dropped. About 140 KB of
+  sixel grew the engine's memory to about 3.8 GB and trapped it. A screen
+  also keeps at most 4096 images, however small: icy_engine scans the whole
+  list for every new image, so 40000 one-pixel images (1.6 MB of sixel)
+  took about 5 s, and the time grew with the square of their number.
+- A cache listing (`SyncTERM:C;L;pattern`) whose pattern escaped a `*` or `?`
+  with a backslash failed with a regular expression error and got no answer;
+  the character now matches itself.
 
 ## 0.1.1 - 2026-10-27
 

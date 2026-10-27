@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use icy_engine::{
     AttributedChar, BitFont, Caret, EditableScreen, HyperLink, IceMode, Layer, Line, MouseField, Palette, Position, Rectangle, RenderOptions, Result,
-    SaveOptions, SavedCaretState, Screen, Selection, Sixel, Size, TerminalState, TextPane,
+    SaveOptions, SavedCaretState, Screen, Selection, Size, TerminalState, TextPane,
 };
 use icy_parser_core::{RipCommand, SkypixCommand};
 use parking_lot::Mutex;
@@ -339,10 +339,6 @@ impl EditableScreen for CaptureScreen {
 
     fn set_size(&mut self, size: Size) {
         self.inner.set_size(size)
-    }
-
-    fn add_sixel(&mut self, pos: Position, sixel: Sixel) {
-        self.inner.add_sixel(pos, sixel)
     }
 
     fn insert_line(&mut self, line: usize, new_line: icy_engine::Line) {

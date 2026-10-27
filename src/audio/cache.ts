@@ -3,10 +3,17 @@
 // does not download a board's sounds again. IndexedDB is per origin (the
 // site serving enig-term); within it, files are keyed by the board endpoint.
 //
-// Bounded: a file larger than `maxFile` is refused, and the whole store (all
-// boards) is kept under `capBytes` by dropping the least recently used files.
-// Without IndexedDB (private windows, blocked storage, quota) it keeps the
-// same structure in memory for the page's lifetime.
+// Bounded: a file larger than `maxFile` is refused, a board keeps at most
+// `maxFiles` files, and the whole store (all boards) is kept under `capBytes`;
+// both drop the least recently used files. Without IndexedDB (private
+// windows, blocked storage, quota) it keeps the same structure in memory for
+// the page's lifetime.
+//
+// A store is O(1): an index of every file (key, size, LRU order) is kept in
+// memory, read from IndexedDB once, and eviction walks it from the oldest end.
+// Another tab writing the same database says so on a BroadcastChannel and the
+// index is read again before the next store; an IndexedDB error moves the
+// store to memory (as before) and the index with it.
 
 import { md5hex } from './md5.ts';
 
@@ -27,7 +34,12 @@ interface Meta {
 export interface StoreLimits {
     capBytes: number;
     maxFile: number;
+    /** Files kept per board (default MAX_FILES). */
+    maxFiles?: number;
 }
+
+/** Files kept per board: a board storing many tiny files cannot grow the index without bound. */
+export const MAX_FILES = 4096;
 
 const DB = 'enig-term-audio';
 
@@ -61,6 +73,14 @@ export class AudioStore {
     persistent = true;
     onFallback: ((why: string) => void) | null = null;
     private clock = 0;
+    /** Every stored file (all boards), least recently used first. */
+    private index = new Map<string, Meta>();
+    /** The same files by board, least recently used first. */
+    private boards = new Map<string, Map<string, Meta>>();
+    private bytes = 0;
+    /** The index matches IndexedDB (false until read, and after another tab wrote). */
+    private indexed = false;
+    private chan: BroadcastChannel | null = null;
 
     limits: StoreLimits;
 
@@ -81,7 +101,17 @@ export class AudioStore {
                         meta.createIndex('used', 'used');
                         db.createObjectStore('data', { keyPath: ['b', 'n'] });
                     };
-                    r.onsuccess = () => res(r.result);
+                    r.onsuccess = () => {
+                        try {
+                            this.chan = new BroadcastChannel(DB);
+                            this.chan.onmessage = () => {
+                                this.indexed = false;
+                            };
+                        } catch {
+                            /* no other tab tells us; the index may run behind theirs */
+                        }
+                        res(r.result);
+                    };
                     r.onerror = () => res(this.fallback(String(r.error?.message ?? r.error)));
                     r.onblocked = () => res(this.fallback('blocked'));
                 } catch (e) {
@@ -106,6 +136,10 @@ export class AudioStore {
         return this.clock;
     }
 
+    private get maxFiles(): number {
+        return this.limits.maxFiles ?? MAX_FILES;
+    }
+
     private remember(key: string, meta: Meta, data: Uint8Array): void {
         const old = this.recent.get(key);
         if (old) this.recentBytes -= old.data.length;
@@ -113,10 +147,66 @@ export class AudioStore {
         this.recent.set(key, { meta, data });
         this.recentBytes += data.length;
         for (const [k, v] of this.recent) {
-            if (this.recentBytes <= RECENT_BYTES) break;
+            if (this.recentBytes <= RECENT_BYTES && this.recent.size <= this.maxFiles) break;
             this.recent.delete(k);
             this.recentBytes -= v.data.length;
         }
+    }
+
+    // --- the index ----------------------------------------------------------------------
+
+    private idxDel(key: string): Meta | undefined {
+        const m = this.index.get(key);
+        if (!m) return undefined;
+        this.index.delete(key);
+        const b = this.boards.get(m.b);
+        b?.delete(key);
+        if (b && !b.size) this.boards.delete(m.b);
+        this.bytes -= m.size;
+        return m;
+    }
+
+    /** Add a file, or move it to the most recently used end. */
+    private idxAdd(key: string, m: Meta): void {
+        this.idxDel(key);
+        this.index.set(key, m);
+        let b = this.boards.get(m.b);
+        if (!b) this.boards.set(m.b, (b = new Map()));
+        b.set(key, m);
+        this.bytes += m.size;
+    }
+
+    private idxReset(): void {
+        this.index.clear();
+        this.boards.clear();
+        this.bytes = 0;
+    }
+
+    private async idxLoad(db: IDBDatabase): Promise<void> {
+        this.indexed = true; // a message from another tab during the read marks it stale again
+        const all = (await req(db.transaction('meta', 'readonly').objectStore('meta').getAll())) as Meta[];
+        all.sort((a, b) => a.used - b.used);
+        this.idxReset();
+        for (const m of all) this.idxAdd(`${m.b}\n${m.n}`, m);
+    }
+
+    /** Take out of the index what must go to make room for `meta` (not in it): the board's oldest past maxFiles, then the oldest of all past capBytes. */
+    private victims(meta: Meta): [string, Meta][] {
+        const out: [string, Meta][] = [];
+        const take = (k: string) => {
+            const m = this.idxDel(k)!;
+            out.push([k, m]);
+            // A copy in `recent` of what is dropped goes too, or a listing keeps showing it.
+            const r = this.recent.get(k);
+            if (r && r.meta.md5 === m.md5) {
+                this.recent.delete(k);
+                this.recentBytes -= r.data.length;
+            }
+        };
+        const b = this.boards.get(meta.b);
+        while (b?.size && b.size >= this.maxFiles) take(b.keys().next().value!);
+        while (this.index.size && this.bytes + meta.size > this.limits.capBytes) take(this.index.keys().next().value!);
+        return out;
     }
 
     /**
@@ -147,40 +237,43 @@ export class AudioStore {
     private async write(meta: Meta, data: Uint8Array): Promise<boolean> {
         const board = meta.b;
         const name = meta.n;
+        const key = `${board}\n${name}`;
         const db = await this.open();
         if (db) {
+            let tx: IDBTransaction | null = null;
             try {
-                const tx = db.transaction(['meta', 'data'], 'readwrite');
+                if (!this.indexed) await this.idxLoad(db);
+                this.idxDel(key);
+                const gone = this.victims(meta);
+                this.idxAdd(key, meta);
+                tx = db.transaction(['meta', 'data'], 'readwrite');
                 const ms = tx.objectStore('meta');
                 const ds = tx.objectStore('data');
-                const all = (await req(ms.getAll())) as Meta[];
-                let total = 0;
-                for (const m of all) if (!(m.b === board && m.n === name)) total += m.size;
-                all.sort((a, b) => a.used - b.used);
-                for (const m of all) {
-                    if (total + data.length <= this.limits.capBytes) break;
-                    if (m.b === board && m.n === name) continue;
+                for (const [, m] of gone) {
                     ms.delete([m.b, m.n]);
                     ds.delete([m.b, m.n]);
-                    total -= m.size;
                 }
                 ms.put(meta);
                 ds.put({ b: board, n: name, data: data.buffer });
                 await done(tx);
+                this.chan?.postMessage(0);
                 return true;
             } catch (e) {
+                // A request that threw leaves the rest of the transaction to commit: a meta row without its data.
+                try {
+                    tx?.abort();
+                } catch {
+                    /* already finished */
+                }
+                // The files now live in memory (empty so far), and the index with them.
+                this.indexed = false;
+                this.idxReset();
                 this.db = Promise.resolve(this.fallback(String((e as Error)?.message ?? e)));
             }
         }
-        const key = `${board}\n${name}`;
-        let total = 0;
-        for (const [k, v] of this.mem) if (k !== key) total += v.meta.size;
-        for (const [k, v] of [...this.mem].sort((a, b) => a[1].meta.used - b[1].meta.used)) {
-            if (total + data.length <= this.limits.capBytes) break;
-            if (k === key) continue;
-            this.mem.delete(k);
-            total -= v.meta.size;
-        }
+        this.idxDel(key);
+        for (const [k] of this.victims(meta)) this.mem.delete(k);
+        this.idxAdd(key, meta);
         this.mem.set(key, { meta, data });
         return true;
     }
@@ -211,6 +304,7 @@ export class AudioStore {
         const e = this.mem.get(key);
         if (!e) return null;
         e.meta.used = this.stamp();
+        if (this.index.get(key) === e.meta) this.idxAdd(key, e.meta);
         return e.data;
     }
 
@@ -218,14 +312,23 @@ export class AudioStore {
     private touch(meta: Meta): void {
         meta.used = this.stamp();
         const m = { ...meta };
+        const key = `${m.b}\n${m.n}`;
         const w = this.writes.then(async () => {
             const db = await this.open();
-            if (!db) return;
+            const idx = this.index.get(key);
+            if (!db) {
+                if (idx && idx.md5 === m.md5) this.idxAdd(key, idx);
+                return;
+            }
             const tx = db.transaction('meta', 'readwrite');
             // Only if it is still there (an eviction or a clear may have removed it).
             const cur = (await req(tx.objectStore('meta').get([m.b, m.n]))) as Meta | undefined;
             if (cur && cur.md5 === m.md5) tx.objectStore('meta').put(m);
             await done(tx);
+            if (idx && idx.md5 === m.md5 && this.index.get(key) === idx) {
+                idx.used = m.used;
+                this.idxAdd(key, idx);
+            }
         });
         this.writes = w.catch(() => {});
     }
@@ -269,6 +372,8 @@ export class AudioStore {
         this.mem.clear();
         this.recent.clear();
         this.recentBytes = 0;
+        this.idxReset();
+        this.indexed = false;
         const db = await this.open();
         if (db) {
             try {
@@ -276,6 +381,7 @@ export class AudioStore {
                 tx.objectStore('meta').clear();
                 tx.objectStore('data').clear();
                 await done(tx);
+                this.chan?.postMessage(0);
             } catch {
                 /* nothing more to do */
             }

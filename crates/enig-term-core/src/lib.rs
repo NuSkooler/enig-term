@@ -809,6 +809,10 @@ impl Core {
     pub fn scrollback_len(&self) -> u32 {
         self.screen.scrollback.len() as u32
     }
+    /// Decoded sixel images the screen holds (tests, diagnostics).
+    pub fn sixel_count(&self) -> u32 {
+        self.screen.sixel_count() as u32
+    }
     /// Also keep the screen's non-blank lines when it is cleared (default on).
     pub fn set_capture_on_clear(&mut self, on: bool) {
         self.screen.capture_on_clear = on;
