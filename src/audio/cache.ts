@@ -240,12 +240,13 @@ export class AudioStore {
         const key = `${board}\n${name}`;
         const db = await this.open();
         if (db) {
+            let tx: IDBTransaction | null = null;
             try {
                 if (!this.indexed) await this.idxLoad(db);
                 this.idxDel(key);
                 const gone = this.victims(meta);
                 this.idxAdd(key, meta);
-                const tx = db.transaction(['meta', 'data'], 'readwrite');
+                tx = db.transaction(['meta', 'data'], 'readwrite');
                 const ms = tx.objectStore('meta');
                 const ds = tx.objectStore('data');
                 for (const [, m] of gone) {
@@ -258,6 +259,12 @@ export class AudioStore {
                 this.chan?.postMessage(0);
                 return true;
             } catch (e) {
+                // A request that threw leaves the rest of the transaction to commit: a meta row without its data.
+                try {
+                    tx?.abort();
+                } catch {
+                    /* already finished */
+                }
                 // The files now live in memory (empty so far), and the index with them.
                 this.indexed = false;
                 this.idxReset();

@@ -599,7 +599,8 @@ test.describe('shell', () => {
             for (let i = 0; i < 25; i++) await a.put('q', `a${i}`, one);
             await a.flushed();
             const afterA = (await a.list('q')).length;
-            await new Promise(res => setTimeout(res, 100)); // the BroadcastChannel message
+            // The BroadcastChannel message.
+            await new Promise(res => setTimeout(res, 300));
             // b stores 3 more on 'q': it must see a's 10, so 'q' stays at 10 on disk.
             for (let i = 0; i < 3; i++) await b.put('q', `b${i}`, one);
             await b.flushed();
@@ -614,6 +615,36 @@ test.describe('shell', () => {
         expect(r.disk.length).toBe(10);
         expect(r.disk).toEqual(expect.arrayContaining(['b0', 'b1', 'b2', 'a24']));
         expect(r.usage).toEqual({ files: 11, bytes: 11 });
+    });
+
+    test('a store that fails while its transaction is open leaves no meta row without data', async ({ page }) => {
+        await open(page);
+        const r = await page.evaluate(async () => {
+            const m = await import('/enig-term-audio.js' as string);
+            const ctx = new OfflineAudioContext(2, 4800, 48000);
+            const mk = () => new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 5000, musicTone: 'square', clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 })).store;
+            const s = mk();
+            await s.clear();
+            const one = new Uint8Array([1]);
+            await s.put('q', 'ok', one);
+            await s.flushed();
+            const orig = IDBObjectStore.prototype.put;
+            // The data request throws after the meta request was made.
+            IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: unknown[]) {
+                if (this.name === 'data') throw new DOMException('refused', 'DataError');
+                return (orig as (...a: unknown[]) => IDBRequest).apply(this, args);
+            } as typeof orig;
+            await s.put('q', 'bad', one);
+            await s.flushed();
+            IDBObjectStore.prototype.put = orig;
+            const disk = (await mk().list('q')).map((e: { name: string }) => e.name);
+            const usage = await mk().usage();
+            await mk().clear();
+            return { persistent: s.persistent, disk, usage };
+        });
+        expect(r.persistent).toBe(false);
+        expect(r.disk).toEqual(['ok']);
+        expect(r.usage).toEqual({ files: 1, bytes: 1 });
     });
 
     test('sound off: no audio answers at all', async ({ page }) => {
