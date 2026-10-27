@@ -1,200 +1,89 @@
 # Changelog
 
-## Unreleased: Phase 4, file transfers
+## 0.1.0 - 2026-10-27
 
-- **XModem, YModem and ZModem, both ways**, as ENiGMA offers them: ZModem
-  8k through sexyz and through lrzsz, YModem and XModem through sexyz. Each
-  checked against the real program over a WebSocket, in Chromium, Firefox
-  and WebKit, through a throwaway ENiGMA (its own upload path, scan and file
-  area included) and through a fake BBS that runs lrzsz and sexyz.
-- **ZModem starts by itself**: the board's ZRQINIT or ZRINIT header is taken
-  off the stream before it is drawn (a hex header with a good CRC, also
-  across chunks). A download begins at once (`zmodemDetect: "auto"`), after a
-  yes (`"ask"`) or not at all (`"off"`); an upload asks for files. X/YModem,
-  which cannot announce themselves, start from the new **Files** panel.
-- **The transfer owns the line** while it runs: nothing is drawn, keys and
-  paste are not sent, NAWS and audio replies wait, Telnet stays underneath
-  (IAC escaped out, decoded in). Afterwards the board's text is shown; after
-  a failure, data still in flight is dropped (the abort repeated while it
-  keeps coming) and the text after it shown. When the board's program dies
-  and the board draws its menu, the abort carries backspaces enough to rub
-  out what reached its prompt as typing.
-- **Saving**: each file as it completes, as a browser download (Blob in 4 MB
-  parts, capped by `transferMaxFile`, 512 MB), or into a folder the user
-  picks where the browser allows (Chromium: streamed, no cap). A file that
-  ends short of its announced size is reported incomplete. **Uploads** read
-  the picked files a megabyte at a time; several files for the batch
-  protocols; the system's picker on phones.
-- **The transfer card**: the board's offer (Receive, Choose files, Refuse),
-  progress (file n of m, bytes, rate, time left), Cancel, the outcome with
-  Save again links; the keyboard returns to the terminal at the end.
-- **X/YModem** in TypeScript (`src/transfer/xymodem.ts`): checksum, CRC-16,
-  1K blocks, YModem batch with block 0 headers and the end-of-batch null
-  block, the double EOT, prompt answers to `C` or NAK (taken only once the
-  line is quiet: sexyz writes 'Copyright' and 'CRC-16' into the same pty),
-  a 'C' while block 0 or 1 waits meaning "again" (sexyz purges before each
-  block), status text skipped.
-- **ZModem** is icy_net's (icy_board, Apache-2.0) in a second, lazily loaded
-  WASM (`enig-term-zmodem.wasm`, about 70 KB gzipped), built from a sparse,
-  pinned checkout with eight patches: the wasm32 port, and fixes found here
-  (a CAN abort inside data, ZRPOS ping-pong with lrzsz, windowed upload reads
-  and skipping refused files, text before headers, overlong subpackets, the
-  modification time in ZFILE, a stale ZDATA after a file). See
-  `SPIKE.md` for why icy_net and not zmodem.js.
-- **API and config**: `download()`, `upload()`, `cancelTransfer()`, `transfer`
-  and the `transfer` event; config.json `transfers`, `zmodemDetect` (a user
-  setting), `transferMaxFile`; element attributes `transfers`,
-  `zmodem-detect`, `transfer-max-file`.
-- **dist/** adds `enig-term-xfer.js` (about 8 KB gzipped, loaded for a
-  transfer), `enig-term-zmodem.wasm` and `LICENSE-APACHE-2.0`.
-- **Tests**: unit tests for the framing, CRCs, both X/YModem machines on a
-  simulated line (status text, corruption, losses) and the traps one by one;
-  X/Y/ZModem against sexyz and lrzsz over pipes (also with their status text
-  in the stream, cancel both ways, a killed sender, skipped files, 10 MB); the
-  detector; a transfer fuzzer (`npm run fuzz:xfer`); browser tests against the
-  fake BBS; and a live matrix against ENiGMA (`test/transfer-live.spec.ts`).
+First release. The archive's `enig-term-0.1.0/` folder holds the built
+terminal: copy its contents into ENiGMA½'s `ws-term/` directory or a web
+root (see the README). Amiga fonts are not included;
+`node tools/fetch-amiga-fonts.mjs` installs them.
 
-## Unreleased: SAUCE font names
-
-- **The SAUCE font name selects our font**: `showSauceArt` reads TInfoS and
-  maps the SAUCE spec's names to the fonts we have: "IBM VGA"/"VGA50"/
-  "VGA25G"/"EGA"/"EGA43" with code page 437, 819, 850, 858, 865 or 866 to
-  the PC font of that code page; "Amiga Topaz 1/2(+)", "P0T-NOoDLE",
-  "MicroKnight(+)" and "mOsOul" to the operator's Amiga fonts (37-42),
-  leniently spelt. Anything else (other code pages, C64, Atari, unknown
-  names), or a font that is not installed, keeps slot 0. Until now every
-  SAUCE file rendered with slot 0: icy_engine's own lookup finds no font
-  once its fonts are stripped. The cell height stays the mode's.
-  `showSauceArt` now returns a promise, and its result has `sauceFont`.
-
-## Unreleased: font slots 43-45
-
-- **DCS-loaded fonts start at slot 46** (`pF = 46` in `CSI = 1 n`). The
-  current CTerm manual adds built-in fonts 43 (Prestel), 44 (Atari ST) and
-  45 (RIPterm) and puts loadable fonts above them. enig-term has no licensed
-  font for 43-45: selecting one is refused like the other unlicensed
-  built-ins (`pR = 1`, a one-time notice naming the font), and a
-  `DCS CTerm:Font` into 43-45 is refused like one into 0-42. The font
-  manifest lists them as refused; `credits.html` shows the slots in order,
-  with 46-255 as the board's.
-
-## Unreleased: Phase 3, audio
-
-- **CTerm audio APC**, complete per the current manual's "Audio APCs"
-  (CTerm 1.332): 256 patch slots, 16 channels (0 "ANSI" music, 1 reserved),
-  `Load`/`LoadBlob`/`Synth` (all eight shapes)/`Copy`/`Queue`/`Flush`/`Volume`/
-  `Wait`/`Update`, with fades (`I=`, `O=`), loops, crossfade (`X`, equal
-  power, both audible during the overlap), per-buffer and per-channel levels
-  and pan (`V=`, `VL=`, `VR=`, dB or 0-100), dB-linear volume ramps (`T=`),
-  durations in ms, frames or periods. A Queue behind a loop ends it at the
-  pass boundary, as the manual says (SyncTERM's and IcyTerm's mixers do not).
-  Replies: `Q;libsndfile`, `Q;libsndfileFormat` (from what this browser
-  decodes), `CSI = 7 n` and `CSI = 7 ; ch n`, asynchronous idle reports,
-  `C;L` listings with MD5, `Q;JXL` (no).
-- **File cache** per board in IndexedDB (memory without it): uploads survive
-  reconnects and reloads, LRU-bounded, glob(3) listings, Clear sound cache
-  in Settings.
-- **"ANSI" music** (`CSI |`, `CSI N`, `CSI M` per `CSI = Ps M`, default mode
-  1) parsed in the core per the manual (icy_engine's own parser is off) and
-  synthesised in WebAudio: PC-speaker square by default, SyncTERM's timbre or
-  a sine (`musicTone`); foreground music holds the stream until it has
-  played, background does not.
-- **The stream can wait for audio**: the core stops right after music and
-  `A;Wait` (`Core::fed`), and the shell holds the rest (as it does for fonts).
-- **Autoplay**: audio starts on Connect, any key or tap, the Sound button or a
-  prompt; until then CTerm audio keeps its state on the wall clock and starts
-  in place when allowed; "ANSI" music meanwhile is skipped. Toolbar Sound
-  button and volume, Settings mute/volume/music voice; `mute`, `volume`,
-  `musicTone` persisted. New `sound` event; `soundState`, `enableSound()`,
-  `clearSoundCache()` on the handle.
-- **Limits** for untrusted input (file size, APC size, cache, decoded memory,
-  buffer length, decode time, buffers per channel, music length, hold time);
-  the APC paths are fuzzed (`npm run fuzz:audio`).
-- **Ogg decoders** for browsers without Ogg Vorbis/Opus in `decodeAudioData`
-  (wasm-audio-decoders, MIT; libvorbis/libopus, BSD-3-Clause), loaded only
-  when needed.
-- **dist/** adds `enig-term-audio.js` (loaded on first use, ~13 KB gzipped)
-  and `enig-term-ogg.js` (only where needed, ~120 KB gzipped).
-- **config.json v1** (compatible): `sound`, `mute`, `volume`, `musicTone`,
-  `audioCache`, `audioMaxFile`, `audioMemory`.
-- **Font notices** (Phase 2 follow-up): a board selecting an Amiga font this
-  site does not have gets a one-time, non-modal notice (and a console
-  warning) instead of nothing; other refused fonts get their own, once each.
-- Tests: ansi-bbs-utils 0.2.1's own host side drives the terminal over a real
-  WebSocket in every browser (probe, upload once across reconnects, music,
-  effects, idle, stop, heard at the expected levels), and in Node against the
-  same calls on its `Testing.FakeCTerm`; OfflineAudioContext measurements of
-  levels, pitch, fades, crossfades, ramps, loop ends and music timing; every
-  claimed format decoded in Chromium, Firefox and WebKit.
-
-## Unreleased: Phase 2, fonts and Amiga
-
-- **No fonts in the WASM.** icy_engine is built from the pinned revision with
-  `patches/icy_tools/0001-no-embedded-fonts.patch` (prepared by
-  `scripts/prepare-icy.sh`): WASM 7,867,283 -> 4,815,657 B, gzip -9
-  1,929,390 -> 1,603,574 B. A slot without a loaded font is refused, never
-  drawn blank.
-- **PC fonts** from VileR's Ultimate Oldschool PC Font Pack (CC BY-SA 4.0):
-  IBM VGA 8x16/8x14/8x8 in 16 code pages as PSF2 files under `fonts/` with a
-  manifest (`scripts/build-fonts.mjs` regenerates them from the pack, checksum
-  checked). Fetched lazily and cacheable; a CP437 session loads the manifest
-  and one 4 KB font. A host font selection holds the stream until its font
-  has arrived.
-- **SyncTERM slots 0-42**: 29 slots built (style variants share the IBM VGA
-  design), Armenian, CP1131, Commodore and Atari refused, 37-42 from
-  operator-installed Amiga fonts. Cell height follows the screen mode (8, 14
-  or 16) as in SyncTERM, with fonts reloaded on a mode change.
-- **CTerm font attributes**: Ps1 0-3 (normal, bold, blink, both) with
-  `CSI ? 31 h`, `? 32 h`, `? 34 h` and CTerm's `? 35 h` (blink disabled), which
-  icy_engine does not handle; `CSI = 1 n` with the real result and slots,
-  `CSI = 2 n` with modes 31-35, `CSI = 3 n` with the cell size.
-- **DCS fonts** kept per height (selectable in a mode of that height);
-  reloading a slot in use updates it.
-- **Ami/X profile**: `profile` is now `auto` (default), `pc` or `amiga`; auto
-  follows the host's normal font. Amiga palette (NComm by default, Term 4.8
-  selectable; OSC 4/104 still work and reset to it), PAL or NTSC pixel aspect,
-  optional rows (`amigaRows`), block cursor, iCE off, all configurable. New
-  `profile` event; Look, Amiga colours and Amiga aspect in Settings.
-- **Amiga fonts for operators**: `tools/fetch-amiga-fonts.mjs` downloads
-  TrueSchool's Amiga fonts from GitHub (pinned commit, SHA-256 per file,
-  nothing written on a mismatch) and installs them as `fonts/amiga/`.
-- **config.json v1** (compatible): `fonts`, `amigaFonts`, `amigaPalette`,
-  `amigaAspect`, `amigaRows`, `amigaFont`, `amigaIce`, `amigaBlink`,
-  `amigaCursor`; `profile` gains `auto`.
-- **dist/** now also holds `fonts/`, `tools/fetch-amiga-fonts.mjs` and
-  `credits.html` (linked from Settings).
-- Fixed on the way: icy_engine replaced the font of a SAUCE file ("IBM VGA")
-  with a blank one once its fonts were stripped; SAUCE files keep slot 0.
-
-## 0.1.0 (unreleased): Phase 1 MVP
-
-First usable terminal, built on the Phase 0 spike (see `SPIKE.md`).
+### Terminal
 
 - **Connection**: Telnet over WebSocket (BINARY, SGA, ECHO, TTYPE `ansi-bbs`,
-  NAWS on every resize, NEW-ENVIRON refused); connection states in the UI;
-  manual reconnect and optional auto-reconnect with backoff; `wss://` only,
-  `ws://` for loopback; a host input seeded from config and lockable.
-- **Replies**: enig-term DA with the package version, CTDA `1;2;3;5`, CPR,
-  `CSI 5 n`, `CSI 255 n`, `CSI = 1..6 n` (OSC 8 reported as supported).
-- **Scrollback**: cell-based (2000 lines by default), rendered through the
-  engine; wheel, touch drag, Shift+PgUp/PgDn; stays put while output
-  scrolls; any key returns to live.
-- **Input**: ANSI-BBS keymap (F1-F12, Alt as ESC prefix, ^H/DEL), hidden
-  textarea with IME and soft-keyboard handling (keyCode 229, predictive
-  replacements), paste; CP437, or Latin-1 under Amiga fonts.
-- **Key bar** for touch devices (sticky Ctrl/Alt, arrows, paging keys, Fn row)
-  that stays above the soft keyboard; phone-width layout.
-- **Selection and copy** as Unicode; **OSC 8 links** with a confirmation that
-  shows the full URL, http(s) only by default.
-- **Display**: VGA-rate text and cursor blink, iCE bright backgrounds,
-  fullscreen, CRT (off by default), 4:3 aspect (on by default), fit or
-  integer scaling; settings saved in localStorage.
-- **Embedding**: `<enig-term>` and `EnigTerm.mount()` with events, in a shadow
-  root; assets resolved from the script URL; documented option precedence.
-- **dist/ contract** and **config.json v1** (docs/building.md, docs/configuration.md).
-- **Robustness**: engine panics are recovered without dropping the
-  connection; several host-reachable panics in icy_engine are guarded; a feed
-  fuzzer runs in the unit tests.
-- **Tests**: Node unit tests, Playwright on Chromium, WebKit (runs without
-  root via `npm run setup:webkit`, or is skipped with a warning) and Firefox,
-  plus Pixel 7 and iPhone 14 emulation; a live test against ENiGMA.
+  NAWS on every resize; NEW-ENVIRON refused). Connection states in the UI,
+  manual reconnect and optional auto-reconnect with backoff. `wss://` only,
+  plus `ws://` for loopback.
+- **Replies**: enig-term DA with the version, CTDA `1;2;3;5`, CPR,
+  `CSI 5 n`, `CSI 255 n`, `CSI = 1..6 n`.
+- **Scrollback** (2000 lines by default): wheel, touch drag,
+  Shift+PgUp/PgDn; any key returns to live.
+- **Input**: ANSI-BBS keymap (F1-F12, Alt as ESC prefix, ^H/DEL), IME and
+  soft-keyboard handling, paste; CP437, or Latin-1 under Amiga fonts.
+- **Phones**: a key bar (sticky Ctrl/Alt, arrows, paging keys, Fn row) that
+  stays above the soft keyboard, and a phone-width layout.
+- **Selection and copy** as Unicode. **OSC 8 links**, http(s) only by
+  default, opened after a confirmation that shows the full URL.
+- **Display**: WebGL2 with a 2D canvas fallback, VGA-rate blink, iCE colours,
+  fullscreen, 4:3 aspect (on by default), fit or integer scaling, an optional
+  CRT effect. Settings are saved in localStorage.
+- **Embedding**: the `<enig-term>` element and `EnigTerm.mount()`, in a
+  shadow root, with events. Assets are found relative to `enig-term.js`.
+- **Robustness**: an engine panic is recovered without dropping the
+  connection; several host-reachable panics in icy_engine are guarded.
+
+### Fonts
+
+- **No fonts in the WASM**: icy_engine is built with
+  `patches/icy_tools/0001-no-embedded-fonts.patch`, which takes the WASM from
+  7.9 MB to 4.8 MB. A slot without a font is refused, never drawn blank.
+- **PC fonts**: IBM VGA 8x16, 8x14 and 8x8 in 16 code pages, from VileR's
+  Ultimate Oldschool PC Font Pack (CC BY-SA 4.0), fetched as needed. A CP437
+  session loads the manifest and one 4 KB font.
+- **SyncTERM slots 0-42**: 29 built, Armenian, CP1131, Commodore and Atari
+  refused, 37-42 from the operator's Amiga fonts. Slots 43-45 (Prestel,
+  Atari ST, RIPterm) are refused; fonts loaded with `DCS CTerm:Font` start
+  at 46. A refused font gets a one-time notice.
+- **CTerm font attributes** (normal, bold, blink, both; `CSI ? 31/32/34/35 h`)
+  and the `CSI = 1/2/3 n` reports. Cell height follows the screen mode.
+- **SAUCE font names** select the matching PC or Amiga font; anything else
+  stays on slot 0.
+- **Amiga profile**: `profile` is `auto`, `pc` or `amiga`. NComm or Term 4.8
+  palette, PAL or NTSC aspect, optional rows, block cursor, iCE off.
+- **Amiga fonts** are not shipped. `tools/fetch-amiga-fonts.mjs` downloads
+  TrueSchool's fonts (pinned commit, SHA-256 per file) into `fonts/amiga/`.
+
+### Audio
+
+- **CTerm audio APC**, per the CTerm 1.332 manual: 256 patch slots, 16
+  channels, `Load`/`LoadBlob`/`Synth`/`Copy`/`Queue`/`Flush`/`Volume`/`Wait`/
+  `Update`, fades, loops, crossfade, levels and pan, volume ramps, and the
+  query replies. Uploaded files are cached per board in IndexedDB.
+- **"ANSI" music** (`CSI |`, `CSI N`, `CSI M`): PC-speaker square by default,
+  SyncTERM's timbre or a sine.
+- **Autoplay**: audio starts on Connect, a key or tap, or the Sound button.
+  Mute and volume in the toolbar and Settings.
+- **Limits** on file size, cache, decoded memory and music length for
+  untrusted input; the APC paths are fuzzed.
+- **Ogg Vorbis and Opus decoders** (wasm-audio-decoders) load only in
+  browsers that cannot decode Ogg themselves.
+
+### File transfers
+
+- **XModem, YModem and ZModem, both ways**, tested against sexyz and lrzsz
+  in Chromium, Firefox and WebKit, through ENiGMA½ and a fake BBS.
+- **ZModem starts by itself** when the board sends its header: at once, after
+  a yes, or never (`zmodemDetect`). X/YModem start from the **Files** panel.
+- **Saving** as browser downloads (up to `transferMaxFile`, 512 MB by
+  default) or, in Chromium, streamed into a folder the user picks. Uploads
+  take several files for the batch protocols.
+- **ZModem** is icy_net's (from icy_board, Apache-2.0), patched and built as
+  a second WASM that loads only for a transfer. X/YModem are enig-term's own.
+
+### dist/
+
+`index.html`, `enig-term.js`, `enig_term_core_bg.wasm`, the lazily loaded
+`enig-term-audio.js`, `enig-term-ogg.js`, `enig-term-xfer.js` and
+`enig-term-zmodem.wasm`, `fonts/`, `tools/fetch-amiga-fonts.mjs`,
+`credits.html`, `config.example.json`, `LICENSE`, `LICENSE-APACHE-2.0` and
+`NOTICE`. The layout is described in docs/building.md; `config.json` v1 in
+docs/configuration.md.
