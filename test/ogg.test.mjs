@@ -118,3 +118,27 @@ test('a Vorbis file of 200000 small packets decodes (no spread of every packet i
     assert.ok(r && r.channelData[0].length > 0);
     assert.ok(pcmBytes(r) <= 1 << 16);
 });
+
+test('an Opus file of more streams than channels is refused (255 streams cost 255 times the decode)', async () => {
+    const fx = demux(fixture('opus.opus'));
+    const audio = fx.packets.slice(2);
+    const delimited = a => Buffer.concat([a.subarray(0, 1), Buffer.from([a.length - 1]), a.subarray(1)]);
+    const file = streams => {
+        const head = Buffer.alloc(21 + 8);
+        head.write('OpusHead', 0, 'latin1');
+        head[8] = 1;
+        head[9] = 8;
+        head.writeUInt32LE(48000, 12);
+        head[18] = 1;
+        head[19] = streams;
+        for (let i = 0; i < 8; i++) head[21 + i] = i;
+        const pages = [page(0, 0, [head], 2), page(1, 0, [Buffer.from('OpusTags\0\0\0\0\0\0\0\0', 'latin1')])];
+        for (let i = 0; i < 4; i++) {
+            const a = audio[i % audio.length];
+            pages.push(page(2 + i, 0xffffffff, [Buffer.concat([...Array.from({ length: streams - 1 }, () => delimited(a)), a])]));
+        }
+        return new Uint8Array(Buffer.concat(pages));
+    };
+    assert.equal(await channels(file(8)), 8, 'eight streams of eight channels decode');
+    assert.equal(await channels(file(255)), 0);
+});

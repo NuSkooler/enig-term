@@ -211,6 +211,10 @@ async function decodeOpus(s: Stream, maxBytes: number): Promise<Decoded | null> 
         channelMappingTable = Array.from(h.subarray(21, 21 + channels));
     }
     if (!channels || channels > MAX_CHANNELS) return null;
+    // Every stream is decoded, whether or not the mapping uses it, so streams cost time the
+    // channel count and the PCM budget do not bound: 255 streams of 1 channel make every
+    // output sample 255 times as expensive. A real file has at most one stream per channel.
+    if (streamCount > MAX_CHANNELS || coupledStreamCount > streamCount) return null;
     const cap = sampleCap(channels, maxBytes);
     const dec = new OpusDecoder({ channels, streamCount, coupledStreamCount, channelMappingTable, preSkip, sampleRate: 48000 } as never) as unknown as {
         ready: Promise<void>;

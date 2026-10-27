@@ -361,8 +361,9 @@ test.describe('formats', () => {
     });
 
     test('the bundled Ogg decoders run in a Worker: the page stays responsive, and a decode past decodeMs is stopped', async ({ page }) => {
-        // About 3 s of decoding on one thread: 8 Opus streams of 15000 packets each.
-        const file = longOpus(fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')), 15000).toString('base64');
+        // A few seconds of decoding on one thread (more than 10 s with 15000 packets on a busy Firefox, which then
+        // ran into the 20 s limit of the second run): 8 Opus streams of 4000 packets each.
+        const file = longOpus(fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')), 4000).toString('base64');
         const r = await page.evaluate(async b64 => {
             const m = await import('/enig-term-audio.js' as string);
             const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
