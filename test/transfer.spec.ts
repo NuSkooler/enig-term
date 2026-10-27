@@ -73,7 +73,9 @@ async function gotFiles(page: Page, id: string) {
 
 /** After a transfer the terminal is the user's again: the board's text shows, and keys reach it. */
 async function usableAfter(page: Page, id: string) {
-    await expect.poll(() => screenText(page), { timeout: 15_000 }).toContain('transfer over');
+    // The board says so once its program has exited; lrzsz's sz can take a while to exit after a cancel
+    // on a slow CI runner (over 15 s seen), so this waits on the hand-back, not on the program's speed.
+    await expect.poll(() => screenText(page), { timeout: 45_000 }).toContain('transfer over');
     const before = (await fakeLog(page, id))[0].sent.length;
     await page.evaluate(() => (window as any).enigTerm.input.focus());
     await page.keyboard.type('zq');
