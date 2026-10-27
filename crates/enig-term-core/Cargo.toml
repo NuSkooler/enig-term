@@ -13,8 +13,10 @@ crate-type = ["cdylib", "rlib"]
 # icy_tools is pinned to an exact revision. Several of icy_tools' own git
 # dependencies (icy_sauce, retrofont, libyaff, codepages) are declared WITHOUT a
 # rev upstream, so our Cargo.lock is the only thing that pins them: commit it.
-icy_engine = { git = "https://github.com/mkrueger/icy_tools", rev = "1456074edac862d79d87ccd8cd4f0e87a57a9d39" }
-icy_parser_core = { git = "https://github.com/mkrueger/icy_tools", rev = "1456074edac862d79d87ccd8cd4f0e87a57a9d39" }
+# default-features = false turns off icy_engine's "embedded-fonts": no font
+# data is compiled in, and the shell loads the fonts it ships at runtime.
+icy_engine = { git = "https://github.com/mkrueger/icy_tools", rev = "274262d834d02fa6bccd49d94109226146b00b96", default-features = false }
+icy_parser_core = { git = "https://github.com/mkrueger/icy_tools", rev = "274262d834d02fa6bccd49d94109226146b00b96" }
 # Same source spec as icy_engine uses (no rev), so both resolve to one copy;
 # Cargo.lock pins it.
 icy_sauce = { git = "https://github.com/mkrueger/icy_sauce" }
@@ -31,9 +33,9 @@ default = []
 # the WASM, so it is off by default. SAUCE art works without it (load_sauce_art).
 viewer = []
 
-# The pinned icy_tools revision above, with patches/icy_tools/*.patch applied,
-# prepared by scripts/prepare-icy.sh (build-wasm.sh runs it). The patches
-# strip icy_engine's embedded fonts: enig-term loads its own at runtime.
+# The pinned icy_tools revision above, with patches/icy_tools/*.patch applied
+# (none at this revision), prepared by scripts/prepare-icy.sh (build-wasm.sh
+# runs it).
 [patch."https://github.com/mkrueger/icy_tools"]
 icy_engine = { path = "../../build/icy_tools/crates/icy_engine" }
 icy_parser_core = { path = "../../build/icy_tools/crates/icy_parser_core" }

@@ -78,7 +78,7 @@ test('an engine panic recovers every terminal on the page', async ({ page }) => 
         const done = new Promise(res => b.on('recovered', res));
         const prevent = console.error;
         console.error = () => {};
-        a.terminal.core.core.debug_passthrough_sync(true);
+        a.terminal.core.core.debug_panic_on_sync(true);
         a.write(String.fromCharCode(27) + '[?2026h');
         await done;
         console.error = prevent;

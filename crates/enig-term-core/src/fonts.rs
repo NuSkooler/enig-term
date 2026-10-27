@@ -1,7 +1,7 @@
 //! Runtime fonts and CTerm font selection.
 //!
-//! enig-term compiles no font data into the WASM (the icy_engine build is
-//! patched, see patches/icy_tools/). The shell fetches fonts and loads them
+//! enig-term compiles no font data into the WASM (icy_engine is built without
+//! its `embedded-fonts` feature). The shell fetches fonts and loads them
 //! with `Core::load_font`; DCS `CTerm:Font` adds more. Every font is kept per
 //! (slot, cell height): like SyncTERM, the cell height comes from the screen
 //! mode (25 rows: 16, 28/43 rows: 14, 50 rows: 8), and a slot is selectable
@@ -10,11 +10,11 @@
 //!
 //! `CSI Ps1 ; Ps2 SP D` puts font Ps2 into attribute slot Ps1 (0 normal,
 //! 1 bright, 2 blink, 3 bright+blink). The bright/blink slots take effect
-//! under `CSI ? 31 h` / `CSI ? 34 h`; icy_engine ignores Ps1 and does not
-//! know modes 31, 32, 34 or CTerm's 35, so the wrapper tracks them (a small
-//! byte scanner in `feed`, see scan.rs) and applies them as text is
-//! printed. Like icy_engine, fonts are a property of each cell (written with
-//! the font current at the time), not of the whole screen.
+//! under `CSI ? 31 h` / `CSI ? 34 h`, and `CSI ? 32 h` / `CSI ? 35 h` drop
+//! the brightening and the blinking; icy_engine applies those modes as text
+//! is written, from the attribute slots the wrapper sets. Like icy_engine,
+//! fonts are a property of each cell (written with the font current at the
+//! time), not of the whole screen.
 
 use std::collections::HashMap;
 
@@ -46,14 +46,6 @@ pub struct FontState {
     pub fonts: HashMap<(u8, u8), BitFont>,
     /// Font numbers in the four CTerm attribute slots (Ps1 0..=3).
     pub slots: [u8; 4],
-    /// `CSI ? 31 h`: bold text uses slot 1 (and slot 3 with blink).
-    pub alt_bright: bool,
-    /// `CSI ? 32 h`: bold does not brighten.
-    pub bright_disable: bool,
-    /// `CSI ? 34 h`: blinking text uses slot 2 (and slot 3 with bold).
-    pub alt_blink: bool,
-    /// `CSI ? 35 h`: blinking text does not blink.
-    pub blink_disable: bool,
     /// Cell height of the current screen mode.
     pub mode_h: u8,
 }
@@ -71,31 +63,9 @@ impl FontState {
         self.get(slot).is_some()
     }
 
-    /// Back to power-on state (RIS): loaded fonts stay, selections and modes go.
+    /// Back to power-on state (RIS): loaded fonts stay, selections go (the
+    /// attribute modes live in icy_engine's TerminalState, which RIS resets).
     pub fn reset_modes(&mut self) {
         self.slots = [0; 4];
-        self.alt_bright = false;
-        self.bright_disable = false;
-        self.alt_blink = false;
-        self.blink_disable = false;
     }
-
-    /// The attribute slot a cell with these attributes is drawn from.
-    pub fn slot_index(&self, bold: bool, blink: bool) -> usize {
-        match (self.alt_bright && bold, self.alt_blink && blink) {
-            (true, true) => 3,
-            (false, true) => 2,
-            (true, false) => 1,
-            (false, false) => 0,
-        }
-    }
-
-    pub fn mode_report(&self) -> [(u16, bool); 4] {
-        [(31, self.alt_bright), (32, self.bright_disable), (34, self.alt_blink), (35, self.blink_disable)]
-    }
-}
-
-/// True for the modes `scan::Found::DecMode` results are applied for.
-pub fn is_cterm_font_mode(p: u16) -> bool {
-    matches!(p, 31 | 32 | 34 | 35)
 }

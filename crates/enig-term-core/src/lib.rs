@@ -29,7 +29,7 @@ mod music;
 mod scan;
 
 use capture::{CaptureScreen, view_screen_from};
-use fonts::{FontState, font_is_drawable, is_cterm_font_mode, mode_height};
+use fonts::{FontState, font_is_drawable, mode_height};
 use music::MusicState;
 use scan::{Found, Pass, Scan};
 use std::collections::VecDeque;
@@ -112,7 +112,7 @@ struct SinkState<'a> {
     events: &'a mut Vec<Value>,
     fonts: &'a mut FontState,
     sync_output: &'a mut bool,
-    passthrough_sync: bool,
+    panic_on_sync: bool,
     /// Set for changes that alter pixels without touching cells (palette, fonts, images).
     needs_full: &'a mut bool,
     inline_images: bool,
@@ -228,7 +228,9 @@ impl CoreSink<'_> {
         Some(match req {
             TerminalRequest::DeviceAttributes => json!({"t": "req", "k": "da"}),
             TerminalRequest::SecondaryDeviceAttributes => json!({"t": "req", "k": "da2"}),
-            TerminalRequest::ExtendedDeviceAttributes => json!({"t": "req", "k": "ctda"}),
+            // Only `CSI < c` and `CSI < 0 c` are requests; with feature numbers
+            // it is a reply (ours, echoed back) and is not answered.
+            TerminalRequest::ExtendedDeviceAttributes(p) if matches!(p.as_slice(), [] | [0]) => json!({"t": "req", "k": "ctda"}),
             TerminalRequest::DeviceStatusReport => json!({"t": "req", "k": "dsr"}),
             TerminalRequest::CursorPositionReport => {
                 // Captured now: later bytes of the same chunk may move the caret.
@@ -260,12 +262,18 @@ impl CoreSink<'_> {
                 if s.caret().visible {
                     modes.push(25);
                 }
-                let fm = self.st.fonts.mode_report();
-                modes.extend(fm.iter().take(2).filter(|m| m.1).map(|m| m.0));
-                if *self.st.host_ice {
-                    modes.push(33);
+                // CTerm's attribute modes (icy_engine applies them as text is written).
+                for (m, on) in [
+                    (31, st.bright_alt_charset),
+                    (32, st.bright_intensity_disabled),
+                    (33, *self.st.host_ice),
+                    (34, st.blink_alt_charset),
+                    (35, st.blink_disabled),
+                ] {
+                    if on {
+                        modes.push(m);
+                    }
                 }
-                modes.extend(fm.iter().skip(2).filter(|m| m.1).map(|m| m.0));
                 json!({"t": "req", "k": "fontmode", "modes": modes})
             }
             TerminalRequest::FontDimensionReport => {
@@ -274,6 +282,12 @@ impl CoreSink<'_> {
             }
             // APC SyncTERM:Q;JXL (icy_parser_core turns it into a request).
             TerminalRequest::JxlSupportReport => json!({"t": "req", "k": "jxl"}),
+            // `CSI = 7 [; Pn ...] n` comes from the scanner, with all its
+            // parameters as written (scan.rs).
+            TerminalRequest::AudioChannelStateReport(_) | TerminalRequest::StateModeReport(7, _) => return None,
+            // Other `CSI = Ps n` (ENiGMA's OSC 8 probe is `CSI = 6 n`). CTerm's
+            // reports take no further parameters.
+            TerminalRequest::StateModeReport(n, rest) if rest.is_empty() => json!({"t": "req", "k": "ctsmrr", "n": n}),
             other => json!({"t": "req", "k": "other", "dbg": format!("{other:?}")}),
         })
     }
@@ -289,40 +303,21 @@ fn cell_px_of(s: &dyn Screen) -> (u32, u32) {
 
 impl CommandSink for CoreSink<'_> {
     fn print(&mut self, text: &[u8]) {
-        // CTerm alternate fonts (CSI ? 31 h, ? 34 h) and intensity/blink
-        // disables (? 32 h, ? 35 h) apply to what is written now.
-        let fs = &*self.st.fonts;
-        let attr = self.inner.screen().caret().attribute;
-        let (bold, blink) = (attr.is_bold(), attr.is_blinking());
-        let idx = fs.slot_index(bold, blink);
-        let strip_bold = fs.bright_disable && bold;
-        let strip_blink = fs.blink_disable && blink;
-        if idx == 0 && !strip_bold && !strip_blink {
-            self.inner.print(text);
-            return;
-        }
-        let mut a = attr;
-        if idx != 0 {
-            a.set_font_page(fs.slots[idx]);
-        }
-        if strip_bold {
-            a.set_is_bold(false);
-        }
-        if strip_blink {
-            a.set_is_blinking(false);
-        }
-        self.screen().caret_mut().attribute = a;
+        // CTerm's alternate fonts (CSI ? 31 h, ? 34 h) and intensity/blink
+        // disables (? 32 h, ? 35 h) are applied by icy_engine as it writes,
+        // from the attribute slots select_font sets.
         self.inner.print(text);
-        self.screen().caret_mut().attribute = attr;
     }
 
     fn emit(&mut self, cmd: TerminalCommand) {
         let cmd = self.clamp_counts(cmd);
         match cmd {
             TerminalCommand::CsiFontSelection { slot, font_number } => self.select_font(slot, font_number),
-            TerminalCommand::CsiDecSetMode(DecMode::SynchronizedOutput, enabled) if !self.st.passthrough_sync => {
-                // icy_engine stamps std::time::Instant::now() here, which panics
-                // on wasm32-unknown-unknown. Track the mode ourselves.
+            TerminalCommand::CsiDecSetMode(DecMode::SynchronizedOutput, enabled) => {
+                // The shell holds rendering while it is on (and owns the timeout).
+                if self.st.panic_on_sync {
+                    panic!("debug panic: CSI ? 2026 h (debug_panic_on_sync)");
+                }
                 *self.st.sync_output = enabled;
             }
             TerminalCommand::CsiDecSetMode(DecMode::IceColors, enabled) => {
@@ -330,9 +325,6 @@ impl CommandSink for CoreSink<'_> {
                 let on = enabled && self.st.ice_allowed;
                 self.inner.emit(TerminalCommand::CsiDecSetMode(DecMode::IceColors, on));
             }
-            // CTerm's mode 35 is "blink disabled" (tracked by DecScan, applied
-            // in print), not icy_engine's cursor-blink mode.
-            TerminalCommand::CsiDecSetMode(DecMode::CursorBlinking, _) => {}
             TerminalCommand::EscReset => {
                 self.inner.emit(cmd);
                 self.st.fonts.reset_modes();
@@ -400,20 +392,9 @@ impl CommandSink for CoreSink<'_> {
     }
 
     fn operating_system_command(&mut self, osc: OperatingSystemCommand) {
-        let mut link: Option<u32> = None;
+        let is_link = matches!(osc, OperatingSystemCommand::Hyperlink { .. });
         let mut reset_palette: Option<Vec<u32>> = None;
         match &osc {
-            OperatingSystemCommand::Hyperlink { params, uri } => {
-                // Mirror icy_engine's rule: both parts must be UTF-8; an empty URI closes.
-                if let (Ok(_), Ok(u)) = (std::str::from_utf8(params), std::str::from_utf8(uri)) {
-                    if u.is_empty() {
-                        link = Some(0);
-                    } else {
-                        self.st.events.push(json!({"t": "link", "uri": u}));
-                        link = Some(u32::MAX); // intern below, once the screen is reachable
-                    }
-                }
-            }
             OperatingSystemCommand::SetTitle(t) | OperatingSystemCommand::SetWindowTitle(t) => {
                 self.st.events.push(json!({"t": "title", "text": String::from_utf8_lossy(t)}));
             }
@@ -424,15 +405,21 @@ impl CommandSink for CoreSink<'_> {
             }
             _ => {}
         }
-        let uri = if let OperatingSystemCommand::Hyperlink { uri, .. } = &osc { Some(String::from_utf8_lossy(uri).into_owned()) } else { None };
         self.inner.operating_system_command(osc);
         if let (Some(idx), Some(p)) = (reset_palette, self.st.default_palette) {
             // OSC 104 resets to the profile's palette, not icy_engine's VGA one.
             apply_palette(self.inner.screen_mut(), p, if idx.is_empty() { None } else { Some(&idx) });
         }
-        if let Some(id) = link {
+        if is_link {
+            // icy_engine decided whether the OSC 8 opened, closed or was ignored
+            // (both parts must be UTF-8; an empty URI closes); cells written
+            // from here on carry the link it holds now.
+            let uri = self.inner.screen().terminal_state().active_hyperlink().map(|(u, _)| u.to_string());
+            if let Some(u) = &uri {
+                self.st.events.push(json!({"t": "link", "uri": u}));
+            }
             if let Some(cap) = self.capture() {
-                cap.active_link = if id == 0 { 0 } else { cap.links.intern(uri.as_deref().unwrap_or("")) };
+                cap.active_link = uri.map_or(0, |u| cap.links.intern(&u));
             }
         }
     }
@@ -476,20 +463,6 @@ impl CommandSink for CoreSink<'_> {
     }
 
     fn report_error(&mut self, error: ParseError, level: ErrorLevel) {
-        // icy_parser_core has no TerminalRequest for `CSI = Ps n` beyond 1..3;
-        // other values (ENiGMA's OSC 8 probe is `CSI = 6 n`) only surface as a
-        // MalformedSequence error. Recover the request from it.
-        if let ParseError::MalformedSequence { sequence: Some(seq), .. } = &error {
-            if let Some(rest) = seq.strip_prefix("CSI = ") {
-                if let Some(n) = rest.strip_suffix(" n").and_then(|v| v.trim().parse::<u32>().ok()) {
-                    // 7 (audio) comes from the scanner, with all its parameters.
-                    if n != 7 {
-                        self.st.events.push(json!({"t": "req", "k": "ctsmrr", "n": n}));
-                    }
-                    return;
-                }
-            }
-        }
         self.inner.report_error(error, level);
     }
 
@@ -550,7 +523,7 @@ pub struct Core {
     /// icy_engine's own 16 colours, to go back to when a profile palette is cleared.
     engine_palette: Vec<(u8, u8, u8)>,
     sync_output: bool,
-    passthrough_sync: bool,
+    panic_on_sync: bool,
 
     frame: Vec<u8>,
     frame_w: u32,
@@ -603,7 +576,7 @@ impl Core {
             default_palette: None,
             engine_palette,
             sync_output: false,
-            passthrough_sync: false,
+            panic_on_sync: false,
             frame: Vec::new(),
             frame_w: 0,
             frame_h: 0,
@@ -665,23 +638,6 @@ impl Core {
             let mut halt = false;
             match found {
                 None => {}
-                Some(Found::DecMode(params, set)) => {
-                    // Split at CTerm modes icy_engine does not parse (CSI ? 31/32/34/35 h|l),
-                    // so each applies exactly where it occurs in the stream.
-                    if params.iter().any(|&p| is_cterm_font_mode(p)) {
-                        self.parse(&bytes[from..=i]);
-                        from = i + 1;
-                        for p in params {
-                            match p {
-                                31 => self.fonts.alt_bright = set,
-                                32 => self.fonts.bright_disable = set,
-                                34 => self.fonts.alt_blink = set,
-                                35 => self.fonts.blink_disable = set,
-                                _ => {}
-                            }
-                        }
-                    }
-                }
                 Some(Found::AudioReport(params)) => {
                     self.parse(&bytes[from..=i]);
                     from = i + 1;
@@ -895,10 +851,11 @@ impl Core {
         self.screen.slow_scroll = on;
     }
 
-    /// Test hook: forward `CSI ? 2026 h` to icy_engine unmodified, which panics
-    /// on wasm32 (`Instant::now`). Used to exercise panic recovery.
-    pub fn debug_passthrough_sync(&mut self, on: bool) {
-        self.passthrough_sync = on;
+    /// Test hook: make `CSI ? 2026 h` panic, to exercise panic recovery.
+    /// (It used to reach icy_engine's `Instant::now`, which panicked on
+    /// wasm32; icy_engine uses web-time now.)
+    pub fn debug_panic_on_sync(&mut self, on: bool) {
+        self.panic_on_sync = on;
     }
 
     /// Render what changed. Returns 0 = nothing, 1 = partial (rows region_y..+region_h),
@@ -1318,7 +1275,7 @@ impl Core {
                 events: &mut self.events,
                 fonts: &mut self.fonts,
                 sync_output: &mut self.sync_output,
-                passthrough_sync: self.passthrough_sync,
+                panic_on_sync: self.panic_on_sync,
                 needs_full: &mut self.force_full,
                 inline_images: self.inline_images,
                 host_ice: &mut self.host_ice,

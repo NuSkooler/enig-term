@@ -5,10 +5,11 @@
 #    URL and rev (the pin), and a [patch."https://github.com/mkrueger/icy_tools"]
 #    section points icy_engine and icy_parser_core at build/icy_tools/, which
 #    this script creates: a shallow fetch of exactly that rev with
-#    patches/icy_tools/*.patch applied (in name order). The patches remove
-#    what enig-term must not ship (embedded font data, see
-#    0001-no-embedded-fonts.patch). Cargo.lock still pins every other git
-#    dependency of icy_tools.
+#    patches/icy_tools/*.patch applied (in name order). icy_engine is built
+#    without its embedded-fonts feature; the patch leaves out the BGI stroke
+#    fonts that feature does not cover (see
+#    0001-bgi-fonts-follow-embedded-fonts.patch). Cargo.lock still pins every
+#    other git dependency of icy_tools.
 #
 # 2. icy_board's icy_net (ZModem, for file transfers). Only crates/icy_net is
 #    checked out (sparse, blobs fetched on demand) at the rev in

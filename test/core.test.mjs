@@ -188,7 +188,7 @@ test('osc 8 links are parsed out of the text stream', () => {
     assert.equal(c.cursor_x(), 4, 'only the 4 visible chars advanced the caret');
 });
 
-test('CSI ?2026h (synchronized output) is intercepted; raw passthrough traps on wasm32', async () => {
+test('CSI ?2026h (synchronized output) is intercepted; the debug hook traps', async () => {
     const c = new Core(80, 25, 'ansi');
     c.feed(bytes(`${CSI}?2026h`));
     assert.equal(c.sync_output(), true);
@@ -197,7 +197,7 @@ test('CSI ?2026h (synchronized output) is intercepted; raw passthrough traps on 
     // The trap leaves its instance unusable, so it gets one of its own.
     const { Core: Fresh } = await loadCore({ fresh: true });
     const d = new Fresh(80, 25, 'ansi');
-    d.debug_passthrough_sync(true);
+    d.debug_panic_on_sync(true);
     const origError = console.error;
     let logged = '';
     console.error = m => (logged += m);
@@ -206,8 +206,8 @@ test('CSI ?2026h (synchronized output) is intercepted; raw passthrough traps on 
     } finally {
         console.error = origError;
     }
-    assert.match(logged, /time not implemented|panic/);
-    console.log('# passthrough panic message:', logged.slice(0, 200));
+    assert.match(logged, /debug panic/);
+    console.log('# debug panic message:', logged.slice(0, 200));
 });
 
 test('cursor getters', () => {
@@ -313,7 +313,7 @@ test('panic message is kept for the shell', async () => {
     // A separate instance: a trap leaves the module unusable.
     const { Core: C2, glue } = await loadCore({ fresh: true });
     const d = new C2(80, 25, 'ansi');
-    d.debug_passthrough_sync(true);
+    d.debug_panic_on_sync(true);
     const origError = console.error;
     console.error = () => {};
     try {
@@ -321,7 +321,7 @@ test('panic message is kept for the shell', async () => {
     } finally {
         console.error = origError;
     }
-    assert.match(glue.last_panic(), /time not implemented/);
+    assert.match(glue.last_panic(), /debug panic/);
 });
 
 // --- Phase 1: host-reachable panics found by the audit and the fuzzer --------

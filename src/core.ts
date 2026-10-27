@@ -105,7 +105,7 @@ export interface CoreSettings {
     rows: number;
     scrollback: number;
     scrollbackOnClear: boolean;
-    /** Test hook: let CSI ? 2026 h reach the engine, which panics on wasm32. */
+    /** Test hook: CSI ? 2026 h panics the engine (debug_panic_on_sync). */
     debugPanic?: boolean;
 }
 
@@ -161,7 +161,7 @@ export class EngineCore {
         this.core.set_apc_limit(this.apcLimit);
         this.core.set_scrollback_lines(s.scrollback);
         this.core.set_capture_on_clear(s.scrollbackOnClear);
-        if (s.debugPanic) this.core.debug_passthrough_sync(true);
+        if (s.debugPanic) this.core.debug_panic_on_sync(true);
         for (const f of this.fonts.values()) {
             try {
                 this.core.load_font(f.slot, f.name, f.data);

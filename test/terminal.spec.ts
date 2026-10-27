@@ -146,7 +146,7 @@ test('panic recovery: the engine is replaced, the connection stays up', async ({
     await expect.poll(() => page.evaluate(() => (window as any).recovered.length)).toBe(1);
     const rec = await page.evaluate(() => (window as any).recovered[0]);
     expect(rec.recovered).toBe(true);
-    expect(rec.message).toMatch(/time not implemented/);
+    expect(rec.message).toMatch(/debug panic/);
     expect(errors.join('\n')).toMatch(/engine trapped/);
     await expect(page.locator('enig-term').locator('[data-toast]')).toContainText('restarted');
     // Output after the panic renders on the new engine; still connected.

@@ -1,10 +1,9 @@
 //! A byte scanner that runs in front of icy_engine's parser and finds the
 //! CTerm sequences the wrapper handles itself, across feed() chunks:
 //!
-//! * `CSI ? Pn ; ... h|l` with CTerm's font modes 31, 32, 34, 35 (icy_engine
-//!   does not parse them), applied at the right point in the stream;
-//! * `CSI = 7 [; Pn ...] n`, the CTerm audio state report request (icy_engine
-//!   only knows `CSI = 1..3 n`, and a two-parameter request is an error there);
+//! * `CSI = 7 [; Pn ...] n`, the CTerm audio state report request, with
+//!   every parameter as written (icy_parser_core's request keeps one channel
+//!   and wraps numbers past 65535; the wrapper ignores it);
 //! * `CSI = Ps M`, which sets the "ANSI" music introducers (CTSAM);
 //! * the music introducers themselves (`CSI |`, `CSI N` in mode 1 or 2,
 //!   `CSI M` without parameters in mode 2) and the music string up to its
@@ -34,8 +33,6 @@ pub enum Pass {
 /// Something that completed at the byte just scanned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Found {
-    /// `CSI ? params h` (true) or `l` (false).
-    DecMode(Vec<u16>, bool),
     /// `CSI = 7 ... n`: the parameters, 7 first.
     AudioReport(Vec<u16>),
     /// A complete music string (without the SO), and whether the introducer
@@ -222,7 +219,6 @@ impl Scan {
         }
         let params = std::mem::take(&mut self.params);
         match (self.prefix, b) {
-            (b'?', b'h' | b'l') => (Pass::Byte, Some(Found::DecMode(params, b == b'h'))),
             (b'=', b'n') if params.first() == Some(&7) => (Pass::Byte, Some(Found::AudioReport(params))),
             (b'=', b'M') => {
                 match params.first().copied().unwrap_or(0) {

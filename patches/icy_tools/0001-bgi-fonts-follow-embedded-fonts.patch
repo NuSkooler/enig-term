@@ -1,0 +1,37 @@
+diff --git a/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs b/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs
+index e3d0209..84f49f5 100644
+--- a/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs
++++ b/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs
+@@ -156,18 +156,21 @@ impl FontType {
+ lazy_static::lazy_static! {
+     pub static ref DEFAULT_BITFONT : BitFont = crate::rip::RIPTERM_FONT.clone();
+ 
++    // enig-term patch (patches/icy_tools/0001-bgi-fonts-follow-embedded-fonts.patch):
++    // the BGI stroke fonts are not under data/fonts, so the embedded-fonts
++    // feature does not cover them; font_bytes! leaves them out with it.
+     static ref FONTS: Vec<Font> = vec![
+-        Font::load(include_bytes!("fonts/SANS.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/TRIP.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/LITT.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/SANS.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/GOTH.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/SCRI.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/SIMP.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/TSCR.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/LCOM.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/EURO.CHR")).unwrap(),
+-        Font::load(include_bytes!("fonts/BOLD.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/SANS.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/TRIP.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/LITT.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/SANS.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/GOTH.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/SCRI.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/SIMP.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/TSCR.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/LCOM.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/EURO.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/BOLD.CHR")).unwrap(),
+     ];
+ }
+ 

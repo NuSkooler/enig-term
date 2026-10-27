@@ -64,7 +64,7 @@ export interface TestHooks {
     naws?: boolean;
     /** Answer DA as CTerm. */
     debugCtermDa?: boolean;
-    /** Let CSI ? 2026 h reach the engine, which panics: exercises recovery. */
+    /** CSI ? 2026 h panics the engine: exercises recovery. */
     debugPanic?: boolean;
     /** Behave as if the browser refused audio until a gesture. */
     audioLock?: boolean;
