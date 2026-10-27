@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The audio cache keeps at most 4096 files per board, dropping the least
+  recently used, and a `C;S` store no longer reads and sorts every stored
+  file: the cache keeps its index in memory, read from IndexedDB once. A
+  board storing 16000 tiny files with distinct names took about 10 s of the
+  page's thread (7.9 s for the last 8000); it now takes about 0.2 s. Tabs
+  sharing the cache tell each other when they store, and the index is read
+  again before the next store.
 - The bundled Ogg decoders refuse a file of more than 8 channels, and stop
   decoding once the PCM (samples x channels x 4 bytes) would pass
   `audioMemory`. A half-megabyte Opus file claiming 255 channels froze the

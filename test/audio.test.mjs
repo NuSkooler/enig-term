@@ -423,6 +423,50 @@ test('cache: glob with a reversed range does not throw (found by the fuzzer); au
     assert.equal(await s.put('b', 'big', new Uint8Array(1001)), false);
 });
 
+test('cache: 16000 tiny C;S stores finish quickly and a board keeps at most 4096 files (each store was O(files))', async () => {
+    const node = new NodeTerm({ holdCap: 20 });
+    await node.store.put('other', 'keep', enc('mine'));
+    const parts = [];
+    for (let n = 0; n < 16000; n++) parts.push(`${ESC}_SyncTERM:C;S;f${n};QQ==${ESC}\\`);
+    const t = performance.now();
+    node.socket.write(Buffer.from(parts.join(''), 'latin1'));
+    await node.pending;
+    await node.engine.chain;
+    await node.store.flushed();
+    const ms = performance.now() - t;
+    // Before: about 10 s (the last 8000 alone took 7 s); now well under 1 s.
+    assert.ok(ms < 4000, `16000 stores took ${ms.toFixed(0)} ms`);
+    assert.deepEqual(await node.store.usage(), { files: 4097, bytes: 4096 + 4 });
+    const list = await node.store.list('wss://bbs.example:443/');
+    assert.equal(list.length, 4096);
+    assert.deepEqual(new Set(list.map(e => e.name)), new Set(Array.from({ length: 4096 }, (_, i) => `f${16000 - 4096 + i}`)));
+    assert.equal(Buffer.from(await node.store.get('other', 'keep')).toString(), 'mine', 'another board is not evicted by the count');
+    node.destroy();
+});
+
+test('cache: per-board file count and the byte cap drop the least recently used; a read counts as a use', async () => {
+    const s = new AudioStore({ capBytes: 10, maxFile: 10, maxFiles: 2 });
+    await s.put('a', '1', enc('1'));
+    await s.put('a', '2', enc('2'));
+    await s.put('b', '1', enc('b'));
+    await s.flushed();
+    await s.get('a', '1');
+    await s.put('a', '3', enc('3'));
+    await s.flushed();
+    assert.deepEqual((await s.list('a')).map(e => e.name), ['1', '3']);
+    assert.deepEqual((await s.list('b')).map(e => e.name), ['1']);
+    // Replacing a file counts its new size only.
+    await s.put('a', '3', enc('333'));
+    await s.flushed();
+    assert.deepEqual(await s.usage(), { files: 3, bytes: 5 });
+    // 7 more bytes: the oldest of all boards ('b/1', then 'a/1') go.
+    await s.put('c', 'x', enc('xxxxxxx'));
+    await s.flushed();
+    assert.deepEqual(await s.usage(), { files: 2, bytes: 10 });
+    assert.deepEqual(await s.list('b'), []);
+    assert.deepEqual((await s.list('a')).map(e => [e.name, e.md5]), [['3', md5hex(enc('333'))]]);
+});
+
 test('fuzz smoke: 300 fixed-seed audio cases through core and engine', async () => {
     const { fuzzAudio } = await import('./fuzz-audio.mjs');
     const res = await fuzzAudio({ seconds: 60, seed: 4242, cases: 300 });

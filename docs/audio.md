@@ -82,7 +82,10 @@ detects audio with the libsndfile query, as ansi-bbs-utils does.
 
 `C;S` stores, `C;L` lists and `Load` reads. The cache is kept per board (the
 endpoint without query or fragment) in IndexedDB, so it survives reconnects
-and reloads and a board uploads a file once.
+and reloads and a board uploads a file once. A board keeps at most 4096
+files, and all boards together at most `audioCache` MB; past either, the
+least recently used files are dropped. Other tabs on the same site share the
+cache.
 
 `C;L;<glob>` matches like glob(3): `*` and `?` stay within a directory. Files
 are listed as `path TAB md5`, with their path relative to the cache, and
@@ -153,6 +156,7 @@ without breaking the session.
 | One file stored, loaded or sent as a blob | 16 MB | `audioMaxFile` (MB) |
 | One audio APC string (base64 of the above, plus the command) | ~21.3 MB | follows `audioMaxFile` |
 | The cache in IndexedDB, all boards together (least recently used dropped) | 64 MB | `audioCache` (MB) |
+| Files in the cache per board (least recently used dropped) | 4096 | |
 | Decoded audio held in slots and on channels | 192 MB | `audioMemory` (MB) |
 | Length of one decoded or synthesised buffer | 300 s | |
 | One decode (browser or Ogg decoder; the Ogg decoder's Worker is terminated) | 15 s | |

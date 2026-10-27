@@ -531,6 +531,40 @@ test.describe('shell', () => {
         await expect.poll(() => sentText(page)).toContain(`${APC}SyncTERM:C;L\n${ST}`);
     });
 
+    test('the cache in IndexedDB: a board keeps at most maxFiles, and another tab\'s stores are counted before evicting', async ({ page }) => {
+        await open(page);
+        const r = await page.evaluate(async () => {
+            const m = await import('/enig-term-audio.js' as string);
+            const ctx = new OfflineAudioContext(2, 4800, 48000);
+            const mk = () => new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 5000, musicTone: 'square', clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 })).store;
+            const a = mk();
+            const b = mk();
+            await a.clear();
+            a.limits.maxFiles = b.limits.maxFiles = 10;
+            const one = new Uint8Array([1]);
+            // b reads the index first (one file of its own board), then a fills board 'q'.
+            await b.put('other', 'x', one);
+            await b.flushed();
+            for (let i = 0; i < 25; i++) await a.put('q', `a${i}`, one);
+            await a.flushed();
+            const afterA = (await a.list('q')).length;
+            await new Promise(res => setTimeout(res, 100)); // the BroadcastChannel message
+            // b stores 3 more on 'q': it must see a's 10, so 'q' stays at 10 on disk.
+            for (let i = 0; i < 3; i++) await b.put('q', `b${i}`, one);
+            await b.flushed();
+            const fresh = mk(); // a new page: only what is in IndexedDB
+            const disk = (await fresh.list('q')).map((e: { name: string }) => e.name);
+            const usage = await fresh.usage();
+            await fresh.clear();
+            return { persistent: a.persistent && b.persistent, afterA, disk, usage };
+        });
+        expect(r.persistent).toBe(true);
+        expect(r.afterA).toBe(10);
+        expect(r.disk.length).toBe(10);
+        expect(r.disk).toEqual(expect.arrayContaining(['b0', 'b1', 'b2', 'a24']));
+        expect(r.usage).toEqual({ files: 11, bytes: 11 });
+    });
+
     test('sound off: no audio answers at all', async ({ page }) => {
         await open(page);
         await page.evaluate(async () => {
