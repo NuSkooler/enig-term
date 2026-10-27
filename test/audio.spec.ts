@@ -396,6 +396,27 @@ test.describe('formats', () => {
         expect(r.full.ok && r.full.stats.workerDecodes === 1, JSON.stringify(r.full)).toBe(true);
         expect(r.full.channels).toBe(8);
     });
+
+    test('a Worker that fails to start is tried again on a later decode; after 3 failures in a row the decoders run on the page', async ({ page }) => {
+        const file = fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')).toString('base64');
+        const r = await page.evaluate(async b64 => {
+            const m = await import('/enig-term-audio.js' as string);
+            const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const ctx = new OfflineAudioContext(1, 48000, 48000);
+            const run = async (fails: number) => {
+                const e = new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs: 10000, musicTone: 'square', forceFallback: true, clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 }));
+                // The decoders' script cannot be fetched (offline, say): no Worker starts, nor does the import.
+                e.opts.oggUrl = new URL('/no-such-ogg.js', location.href).href;
+                for (let i = 0; i < fails; i++) await e.decode(bytes);
+                e.opts.oggUrl = undefined;
+                const ok = !!(await e.decode(bytes));
+                return { ok, stats: { ...e.stats } };
+            };
+            return { once: await run(1), thrice: await run(3) };
+        }, file);
+        expect(r.once.ok && r.once.stats.workerDecodes === 1, JSON.stringify(r.once)).toBe(true);
+        expect(r.thrice.ok && r.thrice.stats.workerDecodes === 0 && r.thrice.stats.fallbackDecodes === 1, JSON.stringify(r.thrice)).toBe(true);
+    });
 });
 
 // --- the shell ---------------------------------------------------------------------------

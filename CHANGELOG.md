@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A decode Worker that fails to load is tried again on a later decode.
+  One failure (a failed fetch while offline, say) used to move the bundled
+  Ogg decoders to the page's thread, without the 15 s stop, until the page
+  closed; now that takes 3 failures in a row.
 - The audio cache keeps at most 4096 files per board, dropping the least
   recently used, and a `C;S` store no longer reads and sorts every stored
   file: the cache keeps its index in memory, read from IndexedDB once. A

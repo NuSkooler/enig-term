@@ -186,7 +186,9 @@ page and one that passes the 15 s limit is terminated. Where no Worker can
 start (the bundle served from another origin than the page, a Content
 Security Policy that refuses it, a browser without module Workers), they run
 on the page's thread as before: the limits above still bound them, but the
-15 s limit then only stops the wait. Under a Content Security Policy, the
+15 s limit then only stops the wait. A Worker that fails to load (a failed
+fetch while offline, say) is tried again on the next decode; after 3 such
+failures in a row the decoders stay on the page's thread. Under a Content Security Policy, the
 Worker must be allowed by `worker-src 'self'`; without `worker-src`, browsers
 check `child-src` and then `script-src`, so a policy with `script-src 'self'`
 already allows it. No `blob:` URL is used. If the server sends a policy with

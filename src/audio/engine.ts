@@ -53,6 +53,8 @@ export interface EngineOptions {
 }
 
 const MAX_SECONDS = 300;
+/** Module Workers that may fail to start in a row before the Ogg decoders run on the page's thread for good. */
+const WORKER_TRIES = 3;
 
 /** The stream waits for this (A;Wait, foreground music). */
 interface Hold {
@@ -131,8 +133,8 @@ export class AudioEngine {
     private decoded = new Map<string, { md5: string; buf: Buf }>();
     private decodedBytes = 0;
     private ogg: Promise<OggModule | null> | null = null;
-    /** A module Worker could not run the Ogg decoders here; they run on this thread. */
-    private noWorker = false;
+    /** Module Workers that failed to start in a row (a failed fetch while offline, say); at WORKER_TRIES the Ogg decoders run on this thread for good. */
+    private workerFails = 0;
     private generation = 0;
     /** Counters (tests, diagnostics). */
     readonly stats = { commands: 0, rejected: 0, decodes: 0, fallbackDecodes: 0, workerDecodes: 0, decodeTimeouts: 0, decodeFailures: 0, dropped: 0, errors: 0 };
@@ -401,12 +403,13 @@ export class AudioEngine {
      * CSP that refuses it); the caller decodes on this thread instead.
      */
     private workerDecode(url: string, data: Uint8Array): Promise<OggResult | null | undefined> {
-        if (typeof Worker === 'undefined' || this.noWorker) return Promise.resolve(undefined);
+        if (typeof Worker === 'undefined' || this.workerFails >= WORKER_TRIES) return Promise.resolve(undefined);
         let w: Worker;
         try {
             w = new Worker(url, { type: 'module' });
         } catch {
-            this.noWorker = true;
+            // Refused outright (a cross-origin bundle, no module Workers): it will not change.
+            this.workerFails = WORKER_TRIES;
             return Promise.resolve(undefined);
         }
         return new Promise(res => {
@@ -424,6 +427,7 @@ export class AudioEngine {
             w.onmessage = (e: MessageEvent<OggResult | null | 'ready'>) => {
                 if (e.data === 'ready') {
                     started = true;
+                    this.workerFails = 0;
                     return;
                 }
                 this.stats.workerDecodes++;
@@ -432,7 +436,7 @@ export class AudioEngine {
             // Before 'ready': the script did not load or run as a module Worker.
             w.onerror = e => {
                 e.preventDefault();
-                if (!started) this.noWorker = true;
+                if (!started) this.workerFails++;
                 done(started ? null : undefined);
             };
             w.postMessage({ bytes: data, maxBytes: this.opts.memoryBytes });
