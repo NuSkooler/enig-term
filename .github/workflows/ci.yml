@@ -2,7 +2,7 @@
 # and Playwright (Chromium, Firefox, Pixel 7; WebKit is a non-blocking step).
 # dist/ is uploaded as an artifact.
 #
-# Toolchain pins (bump together with the README's "Build" section):
+# Toolchain pins (bump together with docs/building.md, "Toolchain"):
 #   Rust 1.96.0 + wasm32-unknown-unknown
 #   wasm-bindgen-cli 0.2.129 (must equal the wasm-bindgen crate pin in both
 #     crates' Cargo.toml; scripts/build-wasm.sh relies on its glue layout)

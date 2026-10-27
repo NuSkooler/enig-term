@@ -191,7 +191,7 @@ First usable terminal, built on the Phase 0 spike (see `SPIKE.md`).
   integer scaling; settings saved in localStorage.
 - **Embedding**: `<enig-term>` and `EnigTerm.mount()` with events, in a shadow
   root; assets resolved from the script URL; documented option precedence.
-- **dist/ contract** and **config.json v1** (README).
+- **dist/ contract** and **config.json v1** (docs/building.md, docs/configuration.md).
 - **Robustness**: engine panics are recovered without dropping the
   connection; several host-reachable panics in icy_engine are guarded; a feed
   fuzzer runs in the unit tests.

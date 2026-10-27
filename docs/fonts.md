@@ -139,7 +139,7 @@ MicroKnight and mO'sOul are credited to their original authors. Whether to
 serve them is the operator's decision.
 
 In these bitmaps, Topaz/Topaz Plus (Kickstart 2) and P0T-NOoDLE hold the
-Amiga's inverted underscore at 0xA0 (non-breaking space), as the README
+Amiga's inverted underscore at 0xA0 (non-breaking space), as the source README
 explains.
 
 ## Amiga profile

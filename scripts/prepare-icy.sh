@@ -52,7 +52,7 @@ prepare() {
     git -C "$dest" -c advice.detachedHead=false checkout -q FETCH_HEAD
     [ "$(git -C "$dest" rev-parse HEAD)" = "$rev" ] || { echo "prepare-icy: fetched the wrong revision of $url" >&2; exit 1; }
     for p in "${patches[@]}"; do
-        git -C "$dest" apply --whitespace=nowarn "$p" || { echo "prepare-icy: $(basename "$p") does not apply to $rev (see README, 'Rebasing icy_tools')" >&2; exit 1; }
+        git -C "$dest" apply --whitespace=nowarn "$p" || { echo "prepare-icy: $(basename "$p") does not apply to $rev (see docs/building.md, 'Rebasing icy_tools')" >&2; exit 1; }
     done
     echo "$stamp" > "$dest/.enig-term-stamp"
 }

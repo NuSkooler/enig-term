@@ -1,5 +1,5 @@
 // Bundle the TS shell with esbuild and assemble dist/ (layout documented in
-// README "dist/ layout"; ENiGMA's /_enig/ws-term/ route serves it as is).
+// docs/building.md, "dist/ layout"; ENiGMA's /_enig/ws-term/ route serves it as is).
 import { build } from 'esbuild';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
