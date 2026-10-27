@@ -1,7 +1,7 @@
 // OSC 8 links (hover, confirmation with the full URL, noopener, scheme
 // policy, embedder override) and selection/copy.
 import { test, expect, type Page } from '@playwright/test';
-import { open, write, cellPoint, shot, ESC, CSI, ST } from './helpers';
+import { open, write, cellPoint, shot, loadPcFont, ESC, CSI, ST } from './helpers';
 
 async function stubOpen(page: Page) {
     await page.evaluate(() => {
@@ -93,6 +93,9 @@ test('the link event lets an embedder handle links itself', async ({ page }) => 
 
 test('mouse selection copies Unicode text (CP437 and Latin-1 cells); clipboard refusal is reported', async ({ page, context }, ti) => {
     await open(page);
+    // Slot 42 is an Amiga slot (Latin-1 text); our ISO-8859-1 font stands in
+    // so the test does not depend on the fetched Amiga fonts.
+    await loadPcFont(page, 42);
     await write(page, `${CSI}2J${CSI}2;3H\xc9\xcd\xcd\xbb box ${CSI}0;42 Dcaf\xe9${CSI}0;0 D \xb0\xb1\xb2${CSI}3;3Hsecond line   `);
     await page.evaluate(() => {
         (window as any).copied = [];
