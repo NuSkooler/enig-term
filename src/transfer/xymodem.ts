@@ -116,11 +116,49 @@ export function wireName(name: string): string {
     return s || 'file';
 }
 
-/** A received file name made safe to save: no path, no control characters, not empty. */
+/** Slashes in other clothes (division, fraction, fullwidth, ...): shown in a name they look like a path. */
+const LOOKALIKE_SLASHES = /[\u2044\u2215\u2216\u29f8\u29f9\ufe68\uff0f\uff3c]/g;
+/** Dots in other clothes (fullwidth, small, one-dot leader): they would hide a file or end a name unseen. */
+const LOOKALIKE_DOTS = /[\u2024\ufe52\uff0e]/g;
+/** Device names Windows will not make files of, with or without an extension. */
+const DEVICE_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])$/i;
+/** Longest name kept, characters and (UTF-8) bytes: file systems stop at 255 bytes, and "(1)" may be added. */
+const NAME_CHARS = 200;
+const NAME_BYTES = 240;
+const UTF8 = new TextEncoder();
+
+/**
+ * A received file name made safe to save and to show: no path, no control
+ * characters, no invisible format characters (bidi overrides that would show
+ * "fdp.exe" as "exe.pdf", zero-width ones), no lookalike slashes, colons and
+ * other characters Windows refuses (fullwidth too), no dots or spaces at
+ * either end, no Windows device name, at most 200 characters and 240 bytes,
+ * and not empty.
+ */
 export function safeName(raw: string, fallback = 'download.bin'): string {
     const base = raw.split(/[\\/]/).pop() ?? '';
-    const s = base.replace(/[\x00-\x1f\x7f"*:<>?|]/g, '_').replace(/^\.+/, '').trim().slice(0, 200);
-    return s || fallback;
+    const s = Array.from(
+        base
+            .replace(/\p{Cf}/gu, '')
+            .replace(/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}"*:<>?|]/gu, '_')
+            .replace(LOOKALIKE_SLASHES, '_')
+            .replace(LOOKALIKE_DOTS, '.'),
+    )
+        // Fullwidth and compatibility forms of what is refused above (NFKC: "\uff1a" is ":").
+        .map(c => (c.charCodeAt(0) > 0x7f && /[\\/:*?"<>|]/.test(c.normalize('NFKC')) ? '_' : c))
+        .join('')
+        .replace(/^[\s.]+/u, '');
+    let capped = '';
+    let bytes = 0;
+    let n = 0;
+    for (const c of s) {
+        bytes += UTF8.encode(c).length;
+        if (++n > NAME_CHARS || bytes > NAME_BYTES) break;
+        capped += c;
+    }
+    capped = capped.replace(/[\s.]+$/u, '');
+    if (DEVICE_NAME.test(capped.split('.')[0].trim())) capped = `_${capped}`;
+    return capped || fallback;
 }
 
 /**

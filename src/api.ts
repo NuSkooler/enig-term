@@ -4,6 +4,7 @@ import {
     loadUserSettings,
     resolve,
     sanitize,
+    startAction,
     type Options,
     type UserSettings,
 } from './config.ts';
@@ -50,9 +51,10 @@ export interface EnigTermHandle {
     /** Forget the sounds boards stored in this browser (all boards). */
     clearSoundCache(): Promise<{ files: number; bytes: number }>;
     /**
-     * Receive files: "zmodem" waits for the board to start sending (ZModem
-     * downloads also start by themselves); "ymodem"/"xmodem" start now (start
-     * the board's side first). `name`: what an XModem file is saved as.
+     * Receive files: "zmodem" waits for the board to start sending (without
+     * it, a ZModem download asks first, or with zmodemDetect "auto" starts by
+     * itself); "ymodem"/"xmodem" start now (start the board's side first).
+     * `name`: what an XModem file is saved as.
      */
     download(protocol?: TransferProtocol, name?: string): boolean;
     /** Send files: "zmodem" waits for the board's receiver; "ymodem"/"xmodem" start now (XModem: one file). */
@@ -93,14 +95,16 @@ export async function mount(el: HTMLElement, options: MountOptions = {}): Promis
     // Callbacks or values sanitize() does not know about pass straight through.
     const urlEnabled = page.urlParams ?? config.urlParams ?? false;
     let url: Partial<Options> = {};
-    let hooks: TestHooks = {};
+    // The debug hooks come only from a global a test sets before the page
+    // loads, never from the URL: a link must not be able to turn them on.
+    const g = (globalThis as { __enigTermTestHooks?: TestHooks }).__enigTermTestHooks;
+    let hooks: TestHooks = { debugCtermDa: g?.debugCtermDa === true, debugPanic: g?.debugPanic === true };
     if (urlEnabled) {
         const q = fromUrlParams(new URLSearchParams(location.search));
         url = sanitize(q.opts, warn);
         hooks = {
+            ...hooks,
             naws: q.hooks.naws === undefined ? undefined : q.hooks.naws !== '0',
-            debugCtermDa: q.hooks.debugDa === 'cterm',
-            debugPanic: q.hooks.debugPanic === '1',
             audioLock: q.hooks.audioLock === '1',
             audioFallback: q.hooks.audioFallback === '1',
         };
@@ -159,6 +163,8 @@ export async function mount(el: HTMLElement, options: MountOptions = {}): Promis
             delete el.dataset.enigTermReady;
         },
     };
-    if (opts.autoConnect && opts.endpoint) term.connect(opts.endpoint);
+    const start = startAction(opts, { config, page });
+    if (start === 'connect') term.connect(opts.endpoint!);
+    else if (start === 'ask') chrome.confirmConnect(opts.endpoint!);
     return handle;
 }

@@ -100,6 +100,8 @@ const AUDIO_WAIT_MS = 300_000;
 const HELD_MAX = 32 << 20;
 /** A transfer sends only while the WebSocket holds less than this. */
 const SEND_HIGH_WATER = 1 << 20;
+/** Longest window title (OSC 0/2) passed on, characters (code points: a pair is never cut in two). */
+const TITLE_MAX = 256;
 
 /** Directory URL (with a trailing slash) relative to the bundle. */
 function dirUrl(s: string): URL | null {
@@ -138,6 +140,8 @@ export class Terminal {
     private reconnectDelay = RECONNECT_MIN_MS;
     private needsDraw = true;
     private raf = 0;
+    /** A BEL came since the last frame: one bell event (and flash) per frame, however many. */
+    private bellPending = false;
     private textBlinkOn = true;
     private cursorOn = true;
     private devW = 0;
@@ -501,6 +505,10 @@ export class Terminal {
     private loop = (): void => {
         if (this.destroyed) return;
         this.raf = requestAnimationFrame(this.loop);
+        if (this.bellPending) {
+            this.bellPending = false;
+            this.events.emit('bell', {});
+        }
         const now = performance.now() - this.t0;
         if (this.blinkOn) {
             const text = Math.floor(now / TEXT_BLINK_MS) % 2 === 0;
@@ -744,12 +752,15 @@ export class Terminal {
                 void this.loadMissing(ev.height, ev.missing);
                 break;
             case 'bell':
-                this.events.emit('bell', {});
+                this.bellPending = true;
                 break;
-            case 'title':
-                this.title = ev.text;
-                this.events.emit('title', { title: ev.text });
+            case 'title': {
+                // Capped before anything shows it (the page's title, the event).
+                const title = Array.from(ev.text).slice(0, TITLE_MAX).join('');
+                this.title = title;
+                this.events.emit('title', { title });
                 break;
+            }
             case 'apc': {
                 if ('data' in ev) {
                     this.logLine(`apc ${JSON.stringify(ev.data.slice(0, 200))}`);

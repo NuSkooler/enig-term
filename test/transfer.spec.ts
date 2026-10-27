@@ -8,7 +8,7 @@ import { test, expect, type Page, type Download } from '@playwright/test';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { fakeLog, fakeUrl, open, waitState } from './helpers';
-import { LRZSZ, SEXYZ, allBytes, random } from './xfer-peers.mjs';
+import { LRZSZ, SEXYZ, allBytes, craftedZmodem, random } from './xfer-peers.mjs';
 
 const sha = (b: Uint8Array) => crypto.createHash('sha256').update(b).digest('hex');
 const enc = (s: string) => Buffer.from(s, 'latin1');
@@ -17,9 +17,13 @@ const pad128 = (b: Buffer) => Buffer.concat([b, Buffer.alloc((128 - (b.length % 
 
 let seq = 0;
 
-/** Connect to the fake BBS running `peer`, and have it start the program. */
-async function board(page: Page, params: Record<string, string>, query = '') {
+/**
+ * Connect to the fake BBS running `peer`, and have it start the program.
+ * `detect`: zmodemDetect (not a URL parameter), or null for the default.
+ */
+async function board(page: Page, params: Record<string, string>, query = '', detect: 'auto' | 'ask' | 'off' | null = 'auto') {
     await open(page, query);
+    if (detect) await page.evaluate(d => (window as any).enigTerm.set('zmodemDetect', d), detect);
     const id = `xfer-${Date.now()}-${++seq}`;
     const q = Object.entries(params).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('');
     await page.evaluate(u => (window as any).enigTerm.connect(u), fakeUrl(page, `xfer${q}`, id));
@@ -203,10 +207,22 @@ test('ZModem upload prepared in the Files panel starts when the board does (10 M
     expect(got.files).toEqual([{ name: 'big-up.bin', size: big.data.length, sha: sha(big.data) }]);
 });
 
-test('ZModem download, "ask first": the offer waits for Receive', async ({ page }) => {
+test('a file name from the board cannot spoof: format characters go, and the card isolates the name', async ({ page }) => {
+    const dl = downloads(page);
+    await open(page);
+    await page.evaluate(() => (window as any).enigTerm.set('zmodemDetect', 'auto'));
+    const z = craftedZmodem([{ name: 'Invoice_\u202efdp.exe', announce: '5', total: 5 }]).flatMap(c => [...c]);
+    await page.evaluate(b => (window as any).enigTerm.transfers.incoming(new Uint8Array(b)), z);
+    expect((await finished(page, 15_000)).phase).toBe('done');
+    await expect.poll(() => dl.length).toBe(1);
+    expect(dl[0].suggestedFilename()).toBe('Invoice_fdp.exe');
+    await expect(ui(page, '[data-xf-list] bdi')).toHaveText(['Invoice_fdp.exe']);
+});
+
+test('ZModem download, "ask first" (the default): the offer waits for Receive', async ({ page }) => {
     test.skip(!LRZSZ, 'lrzsz not installed');
     const dl = downloads(page);
-    const id = await board(page, { peer: 'sz', set: 'small' }, '&zmodemDetect=ask');
+    const id = await board(page, { peer: 'sz', set: 'small' }, '', null);
     await expect.poll(() => phase(page), { timeout: 15_000 }).toBe('offer');
     await ui(page, '[data-act="xf-offer-accept"]').click();
     expect((await finished(page)).phase).toBe('done');

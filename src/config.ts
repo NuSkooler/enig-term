@@ -4,7 +4,8 @@
 //   1. built-in defaults                         (DEFAULTS)
 //   2. config.json                               (operator; ENiGMA generates it)
 //   3. element attributes / EnigTerm.mount() options (the embedding page)
-//   4. URL parameters                            (standalone page only)
+//   4. URL parameters                            (standalone page only; a
+//                                                 short list, see URL_KEYS)
 //   5. user settings in localStorage             (only keys in USER_KEYS, and
 //                                                 never a key the config locks)
 // `lockEndpoint` additionally stops levels 4 and 5 (and the host input) from
@@ -108,7 +109,7 @@ export interface Options {
     audioMemory: number;
     /** File transfers (ZModem, YModem, XModem): the Files panel and ZModem detection. */
     transfers: boolean;
-    /** A ZModem download the board starts: "auto" begins it, "ask" asks first, "off" leaves it on screen as text. */
+    /** A ZModem download the board starts: "ask" (the default) asks first, "auto" begins it, "off" leaves it on screen as text. */
     zmodemDetect: 'auto' | 'ask' | 'off';
     /** Largest file saved through a browser download, MB (larger ones are refused; a chosen folder has no limit). */
     transferMaxFile: number;
@@ -158,7 +159,7 @@ export const DEFAULTS: Readonly<Options> = Object.freeze({
     audioMaxFile: 16,
     audioMemory: 192,
     transfers: true,
-    zmodemDetect: 'auto',
+    zmodemDetect: 'ask',
     transferMaxFile: 512,
 }) as Options;
 
@@ -275,16 +276,28 @@ export function sanitize(src: Record<string, unknown> | null | undefined, warn: 
     return out;
 }
 
-/** Map URL parameters (standalone page) to options. Test hooks are returned separately. */
+/**
+ * Options the URL may set (standalone page). A link can come from anyone, so
+ * only looks and the endpoint: nothing that lets a board do more (sound,
+ * ZModem auto-start), and an endpoint from the URL never connects by itself
+ * (see startAction).
+ */
+const URL_KEYS = ['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect', 'amigaPalette', 'amigaAspect', 'amigaRows', 'musicTone'] as const;
+
+/**
+ * Map URL parameters (standalone page) to options. Harmless test hooks are
+ * returned separately; the debug hooks are never read from the URL (see
+ * TestHooks in terminal.ts).
+ */
 export function fromUrlParams(q: URLSearchParams): { opts: Record<string, unknown>; hooks: Record<string, string> } {
     const opts: Record<string, unknown> = {};
     const map: Record<string, string> = { connect: 'autoConnect', keys: 'keyBar' };
     for (const [k, v] of q) {
         const key = map[k] ?? k;
-        if (['endpoint', 'autoConnect', 'aspect', 'crt', 'sharp', 'blink', 'renderer', 'cols', 'rows', 'scale', 'keyBar', 'profile', 'scrollback', 'autoReconnect', 'amigaPalette', 'amigaAspect', 'amigaRows', 'mute', 'volume', 'musicTone', 'zmodemDetect'].includes(key)) opts[key] = v;
+        if ((URL_KEYS as readonly string[]).includes(key)) opts[key] = v;
     }
     const hooks: Record<string, string> = {};
-    for (const k of ['naws', 'debugDa', 'debugPanic', 'audioLock', 'audioFallback']) {
+    for (const k of ['naws', 'audioLock', 'audioFallback']) {
         const v = q.get(k);
         if (v !== null) hooks[k] = v;
     }
@@ -302,15 +315,11 @@ export function resolve(layers: {
     Object.assign(merged, layers.config ?? {}, layers.page ?? {});
     const locked = new Set(merged.lock);
     if (merged.urlParams && layers.url) {
-        const url = { ...layers.url };
+        // URL parameters may not unlock anything, change locked settings, or
+        // set anything outside URL_KEYS.
+        const url: Record<string, unknown> = {};
+        for (const k of URL_KEYS) if (layers.url[k] !== undefined && !locked.has(k)) url[k] = layers.url[k];
         if (merged.lockEndpoint) delete url.endpoint;
-        // URL parameters may not unlock anything or change locked settings.
-        delete url.lock;
-        delete url.lockEndpoint;
-        delete url.urlParams;
-        delete url.allowInsecure;
-        delete url.linkSchemes;
-        for (const k of locked) delete (url as Record<string, unknown>)[k];
         Object.assign(merged, url);
     }
     for (const k of USER_KEYS) {
@@ -318,6 +327,18 @@ export function resolve(layers: {
         if (v !== undefined && !locked.has(k)) (merged as unknown as Record<string, unknown>)[k] = v;
     }
     return merged;
+}
+
+/**
+ * What to do on load: connect, ask first, or nothing. An endpoint that came
+ * from the URL (not from config.json, attributes or mount() options) never
+ * connects by itself: a crafted link could point the operator's own page at a
+ * hostile board. The user is asked, naming the host.
+ */
+export function startAction(opts: Options, layers: { config?: Partial<Options>; page?: Partial<Options> }): 'connect' | 'ask' | null {
+    if (!opts.autoConnect || !opts.endpoint) return null;
+    const trusted = layers.page?.endpoint !== undefined ? layers.page.endpoint : (layers.config?.endpoint ?? null);
+    return opts.endpoint === trusted ? 'connect' : 'ask';
 }
 
 /** Is this setting one the user may change? */

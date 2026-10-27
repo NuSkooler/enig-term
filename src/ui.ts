@@ -1,7 +1,7 @@
 // The chrome around the screen, inside a shadow root: toolbar (host input,
 // connect, copy/paste, settings, full screen), the settings panel, the
 // on-screen key bar, notices and the link confirmation.
-import { saveUserSettings, userMayChange, USER_KEYS, type KeyBarMode, type Options, type UserSettings } from './config.ts';
+import { checkEndpoint, saveUserSettings, userMayChange, USER_KEYS, type KeyBarMode, type Options, type UserSettings } from './config.ts';
 import { STYLES } from './styles.ts';
 import type { ConnState, Terminal } from './terminal.ts';
 import { label, size, type TransferDirection, type TransferProtocol, type TransferStatus } from './transfers.ts';
@@ -107,6 +107,13 @@ const TEMPLATE = html`
     <p class="why" data-linkwhy hidden></p>
     <div class="actions"><button type="button" data-act="link-cancel">Cancel</button><button type="button" class="primary" data-act="link-open">Open link</button></div>
   </dialog>
+  <dialog data-connectdialog aria-labelledby="et-connect-h">
+    <h2 id="et-connect-h">Connect to this board?</h2>
+    <code class="url" data-connecthost></code>
+    <code class="url" data-connecturl></code>
+    <p class="why" data-connectwhy>The address came from the link that opened this page.</p>
+    <div class="actions"><button type="button" data-act="connect-cancel">Cancel</button><button type="button" class="primary" data-act="connect-ok">Connect</button></div>
+  </dialog>
 </div>`;
 
 /** Seconds as m:ss (or h:mm:ss). */
@@ -116,6 +123,13 @@ function clock(sec: number): string {
     const m = Math.floor((s % 3600) / 60);
     const ss = String(s % 60).padStart(2, '0');
     return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
+/** Text isolated from the bidi ordering of what surrounds it. */
+function bdi(text: string): HTMLElement {
+    const b = document.createElement('bdi');
+    b.textContent = text;
+    return b;
 }
 
 const STATE_TEXT: Record<ConnState, string> = {
@@ -135,6 +149,7 @@ export class Chrome {
     private keyBarShown = false;
     private toastTimer = 0;
     private pendingLink = '';
+    private pendingConnect = '';
     private promptDismissed = false;
     /** Files chosen in the Files panel for the next upload. */
     private picked: File[] = [];
@@ -275,6 +290,14 @@ export class Chrome {
             this.closeLink();
             if (href) t.openLink(href);
         });
+        this.on('[data-act="connect-cancel"]', 'click', () => this.closeConnect());
+        this.on('[data-act="connect-ok"]', 'click', () => {
+            const ep = this.pendingConnect;
+            this.closeConnect();
+            if (!ep) return;
+            t.sound.prime();
+            t.connect(ep);
+        });
         this.showState(t.state, '');
     }
 
@@ -347,7 +370,51 @@ export class Chrome {
         } catch {
             d.setAttribute('open', '');
         }
-        (allowed ? this.q<HTMLButtonElement>('[data-act="link-open"]') : this.q<HTMLButtonElement>('[data-act="link-cancel"]')).focus();
+        // Cancel, not Open, has the focus: Enter (or a stray key) does not open it.
+        this.q<HTMLButtonElement>('[data-act="link-cancel"]').focus();
+    }
+
+    /** Ask before connecting to an endpoint the URL gave (see startAction in config.ts). */
+    confirmConnect(endpoint: string): void {
+        const d = this.q<HTMLDialogElement>('[data-connectdialog]');
+        this.pendingConnect = endpoint;
+        // The host on its own line (punycode for an IDN), then the whole address.
+        // An address with a user name in it ("wss://bank.com@evil.example") hides
+        // the real host in plain sight: not offered.
+        const check = checkEndpoint(endpoint, this.opts.allowInsecure);
+        let host = '';
+        let creds = false;
+        try {
+            const u = new URL(check.url);
+            host = u.host;
+            creds = !!(u.username || u.password);
+        } catch {
+            /* the reason below says it */
+        }
+        this.q('[data-connecthost]').textContent = host;
+        this.q('[data-connecturl]').textContent = check.url;
+        const why = this.q('[data-connectwhy]');
+        const refuse = creds ? 'it has a user name or password in it' : !check.ok ? (check.reason ?? 'not a valid address') : '';
+        why.textContent = refuse ? `This address cannot be used: ${refuse}.` : 'The address came from the link that opened this page.';
+        this.q<HTMLButtonElement>('[data-act="connect-ok"]').hidden = !!refuse;
+        if (refuse) this.pendingConnect = '';
+        try {
+            d.showModal();
+        } catch {
+            d.setAttribute('open', '');
+        }
+        this.q<HTMLButtonElement>('[data-act="connect-cancel"]').focus();
+    }
+
+    private closeConnect(): void {
+        const d = this.q<HTMLDialogElement>('[data-connectdialog]');
+        this.pendingConnect = '';
+        try {
+            d.close();
+        } catch {
+            d.removeAttribute('open');
+        }
+        this.terminal?.input.focus();
     }
 
     private closeLink(): void {
@@ -535,7 +602,11 @@ export class Chrome {
         this.q('[data-xf-msg]').textContent = st.message ?? '';
         const f = st.file;
         const nth = f ? (f.count && f.count > 1 ? ` · ${f.index + 1} of ${f.count}` : f.index > 0 ? ` · file ${f.index + 1}` : '') : '';
-        this.q('[data-xf-file]').textContent = running && f ? `${f.name}${nth}` : '';
+        // File names come from the board: each in a <bdi>, so right-to-left
+        // text in one cannot reorder what is around it.
+        const fileEl = this.q('[data-xf-file]');
+        if (running && f) fileEl.replaceChildren(bdi(f.name), ...(nth ? [nth] : []));
+        else fileEl.replaceChildren();
         const bar = this.q('[data-xf-bar]');
         bar.hidden = !(running && f);
         const frac = f && f.size ? Math.min(1, st.fileBytes / f.size) : f && f.size === 0 ? 1 : null;
@@ -557,7 +628,7 @@ export class Chrome {
                 const li = document.createElement('li');
                 li.className = x.ok ? 'ok' : 'bad';
                 const name = document.createElement('span');
-                name.textContent = `${x.ok ? '✓' : '✗'} ${x.name} (${size(x.size)})${x.skipped ? ': skipped, too large' : x.ok ? (up ? '' : x.where === 'folder' ? ': saved in the folder' : '') : ': incomplete'}`;
+                name.append(`${x.ok ? '✓' : '✗'} `, bdi(x.name), ` (${size(x.size)})${x.skipped ? ': skipped, too large' : x.ok ? (up ? '' : x.where === 'folder' ? ': saved in the folder' : '') : ': incomplete'}`);
                 li.appendChild(name);
                 if (x.ok && x.url) {
                     const a = document.createElement('a');

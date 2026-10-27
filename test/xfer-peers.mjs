@@ -134,3 +134,42 @@ export function runPeer([cmd, args, cwd], makeEngine, { timeout = 120_000, tickM
 export function haveCmd(cmd) {
     return spawnSync('sh', ['-c', `command -v ${cmd}`]).status === 0;
 }
+
+// A hand-made ZModem sender (no peer needed): ZRQINIT, then per file ZFILE
+// (name, announced size), ZDATA and the data in 1 KB subpackets, ZEOF; ZFIN.
+export function craftedZmodem(files) {
+    const ZDLE = 0x18;
+    const crc16 = (b, c = 0) => {
+        for (const x of b) {
+            c ^= x << 8;
+            for (let i = 0; i < 8; i++) c = c & 0x8000 ? ((c << 1) ^ 0x1021) & 0xffff : (c << 1) & 0xffff;
+        }
+        return c;
+    };
+    const ESCAPED = new Set([0x18, 0x10, 0x90, 0x11, 0x91, 0x13, 0x93]);
+    const esc = b => b.flatMap(x => (ESCAPED.has(x) ? [ZDLE, x ^ 0x40] : [x]));
+    const pos4 = n => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+    const hexHdr = (type, p) => {
+        const h = [type, ...p];
+        const c = crc16(h);
+        return [...Buffer.from(`**\x18B${Buffer.from([...h, c >> 8, c & 0xff]).toString('hex')}\r\n\x11`, 'latin1')];
+    };
+    const binHdr = (type, p) => {
+        const h = [type, ...p];
+        const c = crc16(h);
+        return [0x2a, ZDLE, 0x41, ...esc([...h, c >> 8, c & 0xff])];
+    };
+    const sub = (data, end) => {
+        const c = crc16([...data, end]);
+        return [...esc([...data]), ZDLE, end, ...esc([c >> 8, c & 0xff])];
+    };
+    const chunks = [hexHdr(0, [0, 0, 0, 0])];
+    for (const { name, announce, total } of files) {
+        chunks.push([...binHdr(4, [0, 0, 0, 0]), ...sub([...Buffer.from(`${name}\0${announce}\0`)], 0x6b)], binHdr(10, pos4(0)));
+        const block = new Uint8Array(1024).fill(0x42);
+        for (let sent = 0; sent < total; sent += 1024) chunks.push(sub(block.subarray(0, Math.min(1024, total - sent)), sent + 1024 >= total ? 0x68 : 0x69));
+        chunks.push(hexHdr(11, pos4(total)));
+    }
+    chunks.push(hexHdr(8, [0, 0, 0, 0]), [0x4f, 0x4f]);
+    return chunks.map(c => new Uint8Array(c));
+}

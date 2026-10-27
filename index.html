@@ -15,8 +15,8 @@
 </head>
 <body>
   <!-- Standalone page: reads ./config.json if there is one (see docs/configuration.md),
-       URL parameters (endpoint, connect, ...) override it, and without an endpoint the
-       host input asks for one. -->
+       URL parameters (endpoint, connect, ...) override it (an endpoint from the URL asks
+       before connecting), and without an endpoint the host input asks for one. -->
   <enig-term config="config.json" url-params fill></enig-term>
   <noscript>enig-term needs JavaScript and WebAssembly.</noscript>
   <script type="module">
@@ -25,7 +25,7 @@
     customElements.whenDefined('enig-term').then(() => el.ready).then(h => {
       const base = h.getOption('title');
       document.title = base;
-      h.on('title', ev => { document.title = ev.title ? `${ev.title} - ${base}` : base; });
+      h.on('title', ev => { const t = Array.from(String(ev.title ?? '')).slice(0, 256).join(''); document.title = t ? `${t} - ${base}` : base; });
       window.enigTerm = h.terminal; // diagnostics and tests
       document.body.dataset.ready = '1';
     }).catch(() => { document.body.dataset.ready = 'error'; });

@@ -23,7 +23,9 @@ OSC 8 links are underlined by the engine and show a pointer and their URL on
 hover. A click shows a confirmation with the full, normalised URL (IDN hosts
 in punycode) before `window.open(url, "_blank", "noopener,noreferrer")`. Only
 http(s) is allowed by default (`linkSchemes`); other links are shown but
-cannot be opened. Links in scrollback work. The terminal answers `CSI = 6 n`
+cannot be opened. `javascript:`, `data:`, `vbscript:`, `file:` and `blob:`
+are refused even when `linkSchemes` lists them. Cancel has the focus in the
+confirmation, so Enter does not open a link. Links in scrollback work. The terminal answers `CSI = 6 n`
 with `CSI = 6 ; 1 n`.
 
 ## Replies

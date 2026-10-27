@@ -6,8 +6,8 @@ the real program behind it (see [Tests](building.md#tests)).
 
 | ENiGMA protocol | The board runs (download / upload) | In enig-term |
 |---|---|---|
-| ZModem 8k (SEXYZ), `zmodem8kSexyz` | `sexyz -telnet -8 sz @list` / `sexyz -telnet -8 rz <dir>` | ZModem: starts by itself |
-| ZModem 8k, `zmodem8kSz` | lrzsz `sz --zmodem --try-8k --binary --restricted` / `rz --zmodem --binary --restricted` | ZModem: starts by itself |
+| ZModem 8k (SEXYZ), `zmodem8kSexyz` | `sexyz -telnet -8 sz @list` / `sexyz -telnet -8 rz <dir>` | ZModem: detected, starts after a click |
+| ZModem 8k, `zmodem8kSz` | lrzsz `sz --zmodem --try-8k --binary --restricted` / `rz --zmodem --binary --restricted` | ZModem: detected, starts after a click |
 | YModem (SEXYZ), `ymodemSexyz` | `sexyz -telnet sY @list` (1K blocks) / `sexyz -telnet ry <dir>` | YModem batch, from the Files panel |
 | XModem (SEXYZ), `xmodemSexyz` | `sexyz -telnet sX @list` (1K blocks) / `sexyz -telnet rC <file>` | XModem (checksum, CRC-16, 1K), from the Files panel |
 
@@ -17,10 +17,12 @@ ENiGMA offers no YModem-G, and enig-term has none.
 
 Pick the files on the board and start its download.
 
-ZModem starts by itself. The board's `sz` announces it with a ZRQINIT header,
-which the terminal takes off the stream before it is drawn, and receiving
-begins. `zmodemDetect: "ask"` shows the card first (Receive or Refuse).
-`"off"` leaves it alone, and its bytes then show as text. When detection is
+ZModem announces itself. The board's `sz` sends a ZRQINIT header, which the
+terminal takes off the stream before it is drawn, and the card asks first
+(Receive or Refuse): by default (`zmodemDetect: "ask"`) a board cannot start
+a download without a click. `"auto"` begins receiving at once (the Files
+panel's "ZModem downloads: Start by themselves"). `"off"` leaves it alone,
+and its bytes then show as text. When detection is
 off, Files → Download → ZModem → "Wait for the board" does the same for one
 transfer.
 
@@ -33,14 +35,24 @@ board's menu as a keystroke. XModem carries no file name, so the panel's
 receivers do.
 
 Each file is saved the moment it is complete, under the name the board sent
-(path parts and control characters removed), as a browser download. The
+(path parts, control characters, invisible format characters such as bidi
+overrides and zero-width spaces, and lookalike slashes removed; no dots or
+spaces at either end; fullwidth forms of the characters Windows refuses;
+Windows device names such as `CON` or `NUL` get a leading underscore; at most
+200 characters and 240 bytes), as a browser download. The
+same name is used in a chosen folder, and the transfer card shows it isolated
+from the text around it. The
 browser may ask once before several. A Chromium browser can save into a folder
 instead (Files → "Save into a folder…", asked once per page). Files are then
 written as they arrive, with no size limit. Otherwise a file is kept as Blobs
 (4 MB parts, which a browser may move to disk) until it is complete, and one
 larger than `transferMaxFile` (512 MB) is refused: ZModem skips just that
-file, X/YModem stop. A file that ends short of the size the board announced
-(YModem's header, ZModem's ZFILE) is reported incomplete and not saved.
+file, X/YModem stop. The limit holds for the bytes that actually arrive too:
+a ZModem sender that announces a small file and sends more is stopped once it
+passes `transferMaxFile`, or the announced size by more than 8 KB (a ZFILE
+with no size counts as 0 bytes). A file that
+ends short of the size the board announced (YModem's header, ZModem's ZFILE)
+is reported incomplete and not saved.
 
 ## Uploading
 

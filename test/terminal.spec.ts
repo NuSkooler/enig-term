@@ -31,7 +31,7 @@ test('negotiation and connect probes against an ENiGMA-like host', async ({ page
     await expect(page.locator('enig-term').locator('[data-act="connect"]')).toHaveText('Reconnect');
 });
 
-test('host input dials; URL ?endpoint=&connect=1 works; the button reconnects', async ({ page }, ti) => {
+test('host input dials; URL ?endpoint=&connect=1 asks first; the button reconnects', async ({ page }, ti) => {
     const id = `dial-${ti.project.name}-${Date.now()}-${ti.repeatEachIndex}`;
     await open(page, `&endpoint=${encodeURIComponent('ws://127.0.0.1:' + new URL(page.url() || 'http://127.0.0.1:8090').port)}`);
     const host = page.locator('enig-term').locator('[data-host]');
@@ -57,6 +57,16 @@ test('host input dials; URL ?endpoint=&connect=1 works; the button reconnects', 
     const id2 = `url-${ti.project.name}-${Date.now()}-${ti.repeatEachIndex}`;
     await page2.goto(`/?blink=0&endpoint=${encodeURIComponent(fakeUrl(page, 'probe', id2))}&connect=1`);
     await page2.waitForFunction(() => document.body.dataset.ready === '1');
+    // An endpoint from the URL never connects by itself: the user is asked,
+    // with the host named and Cancel focused.
+    const ask = page2.locator('enig-term').locator('[data-connectdialog]');
+    await expect(ask).toBeVisible();
+    await expect(ask.locator('[data-connecturl]')).toContainText('/fake-bbs?script=probe');
+    await expect(ask.locator('[data-act="connect-cancel"]')).toBeFocused();
+    await page2.waitForTimeout(300);
+    expect(await page2.evaluate(() => (window as any).enigTerm.state)).toBe('idle');
+    expect(await fakeLog(page2, id2)).toEqual([]);
+    await ask.locator('[data-act="connect-ok"]').click();
     await waitState(page2, 'connected');
     expect(await page2.locator('enig-term').locator('[data-host]').inputValue()).toContain('/fake-bbs');
     await page2.close();
@@ -118,7 +128,10 @@ test('config.json: values apply, lockEndpoint and lock[] hold against URL and us
 
 test('panic recovery: the engine is replaced, the connection stays up', async ({ page }, ti) => {
     const id = `panic-${ti.project.name}-${Date.now()}-${ti.repeatEachIndex}`;
-    await open(page, '&debugPanic=1');
+    // The debug hooks are not URL parameters: a test sets them before the page loads.
+    await page.addInitScript(() => ((window as any).__enigTermTestHooks = { debugPanic: true }));
+    await open(page, '&debugPanic=1'); // ignored: proves a link cannot turn it on
+
     await page.evaluate(u => {
         const t = (window as any).enigTerm;
         (window as any).recovered = [];
@@ -172,6 +185,67 @@ test('settings persist in localStorage; a throwing localStorage does not break t
     expect(await page2.evaluate(() => (window as any).enigTerm.opts.crt)).toBe(true);
     await expect(r2.locator('[data-toast]')).toContainText('could not be saved');
     await page2.close();
+});
+
+test('a flood of BELs is one bell (event and flash) per frame', async ({ page }) => {
+    await open(page);
+    const n = await page.evaluate(async () => {
+        const t = (window as any).enigTerm;
+        let n = 0;
+        t.events.on('bell', () => n++);
+        t.write('\x07'.repeat(100_000));
+        t.write('\x07'.repeat(100_000));
+        for (let i = 0; i < 3; i++) await new Promise(r => requestAnimationFrame(r));
+        return n;
+    });
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(n).toBeLessThanOrEqual(3);
+});
+
+test('an OSC title is capped at 256 characters before the event and the page title see it', async ({ page }) => {
+    await open(page);
+    const r = await page.evaluate(async () => {
+        const t = (window as any).enigTerm;
+        const got: string[] = [];
+        t.events.on('title', (e: any) => got.push(e.title));
+        t.write(`\x1b]2;${'T'.repeat(5000)}\x07`);
+        await new Promise(r => requestAnimationFrame(r));
+        return { got: got.map(s => s.length), title: t.title.length, doc: document.title.length };
+    });
+    expect(r.got).toEqual([256]);
+    expect(r.title).toBe(256);
+    expect(r.doc).toBeLessThanOrEqual(256 + ' - enig-term'.length);
+});
+
+test('an OSC title cut at 256 characters never cuts a surrogate pair', async ({ page }) => {
+    await open(page);
+    const r = await page.evaluate(async () => {
+        const t = (window as any).enigTerm;
+        const got: string[] = [];
+        t.events.on('title', (e: any) => got.push(e.title));
+        // 255 letters, then an emoji (two UTF-16 units) straddling the 256 mark, then more.
+        t.write(new TextEncoder().encode(`\x1b]2;${'T'.repeat(255)}\u{1F600}${'U'.repeat(50)}\x07`));
+        await new Promise(r => requestAnimationFrame(r));
+        return { got, well: got.every(s => s.isWellFormed()), doc: document.title.isWellFormed() };
+    });
+    expect(r.got.length).toBe(1);
+    expect(Array.from(r.got[0]).length).toBe(256);
+    expect(r.well).toBe(true);
+    expect(r.doc).toBe(true);
+});
+
+test('an endpoint with a user name in it is named by its real host and cannot be connected', async ({ page }) => {
+    await page.goto(`/?blink=0&endpoint=${encodeURIComponent('wss://bank.example@evil.example/x')}&connect=1`);
+    await page.waitForFunction(() => document.body.dataset.ready === '1');
+    const ask = page.locator('enig-term').locator('[data-connectdialog]');
+    await expect(ask).toBeVisible();
+    await expect(ask.locator('[data-connecthost]')).toHaveText('evil.example');
+    await expect(ask.locator('[data-act="connect-ok"]')).toBeHidden();
+    await expect(ask).toContainText('user name');
+    // An IDN host is shown as punycode.
+    await page.goto(`/?blink=0&endpoint=${encodeURIComponent('wss://b\u00e4nk.example/')}&connect=1`);
+    await page.waitForFunction(() => document.body.dataset.ready === '1');
+    await expect(page.locator('enig-term').locator('[data-connecthost]')).toHaveText('xn--bnk-qla.example');
 });
 
 test('full screen toggles (element fullscreen, or the viewport-covering fallback)', async ({ page }) => {

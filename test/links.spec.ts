@@ -28,9 +28,11 @@ test('hover shows a link; click asks first with the full URL; Open uses noopener
     await expect.poll(() => page.evaluate(() => (window as any).enigTerm.canvas.style.cursor)).toBe('');
 
     await page.mouse.click(p.x, p.y);
-    const dialog = page.locator('enig-term').locator('dialog');
+    const dialog = page.locator('enig-term').locator('[data-linkdialog]');
     await expect(dialog).toBeVisible();
     await expect(dialog.locator('[data-linkurl]')).toHaveText(LINK);
+    // Cancel has the focus: Enter does not open the link.
+    await expect(dialog.locator('[data-act="link-cancel"]')).toBeFocused();
     await page.screenshot({ path: `test/screenshots/${ti.project.name}-link-confirm.png` });
     // Cancel: nothing opens.
     await dialog.locator('[data-act="link-cancel"]').click();
@@ -49,8 +51,8 @@ test('non-http(s) links are shown but cannot be opened', async ({ page }) => {
     await write(page, `${CSI}2J${CSI}1;1H${ESC}]8;;javascript:alert(1)${ST}click me${ESC}]8;;${ST}`);
     const p = await cellPoint(page, 2, 0);
     await page.mouse.click(p.x, p.y);
-    const dialog = page.locator('enig-term').locator('dialog');
-    await expect(dialog.locator('[data-linkwhy]')).toContainText('javascript: links are not allowed');
+    const dialog = page.locator('enig-term').locator('[data-linkdialog]');
+    await expect(dialog.locator('[data-linkwhy]')).toContainText('javascript: links are never allowed');
     await expect(dialog.locator('[data-act="link-open"]')).toBeHidden();
     await dialog.locator('[data-act="link-cancel"]').click();
     expect(await page.evaluate(() => (window as any).opened)).toEqual([]);
@@ -88,7 +90,7 @@ test('the link event lets an embedder handle links itself', async ({ page }) => 
     const p = await cellPoint(page, 0, 0);
     await page.mouse.click(p.x, p.y);
     expect(await page.evaluate(() => (window as any).seen)).toEqual(['https://x.example/']);
-    await expect(page.locator('enig-term').locator('dialog')).toBeHidden();
+    await expect(page.locator('enig-term').locator('[data-linkdialog]')).toBeHidden();
 });
 
 test('mouse selection copies Unicode text (CP437 and Latin-1 cells); clipboard refusal is reported', async ({ page, context }, ti) => {

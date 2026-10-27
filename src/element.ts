@@ -9,7 +9,7 @@
 //   title, cols, rows, profile (auto|pc|amiga), scrollback
 //   fonts, amiga-fonts (font directories), amiga-palette, amiga-aspect, amiga-rows
 //   sound ("off": no audio at all), mute, volume (0-100), music-tone (square|syncterm|sine)
-//   transfers ("off": no file transfers), zmodem-detect (auto|ask|off), transfer-max-file (MB)
+//   transfers ("off": no file transfers), zmodem-detect (ask|auto|off), transfer-max-file (MB)
 //   crt, aspect   booleans: present / "on" / "true" = on, "off" / "false" = off
 //   scale         fit | integer;   keybar  auto | on | off
 //   toolbar       "off" hides the toolbar;  persist  "off" stops saving user settings

@@ -4,7 +4,9 @@
 
 `index.html` is `<enig-term config="config.json" url-params fill>`. It reads
 `./config.json` if there is one, and without an endpoint it asks for a host.
-On the standalone page only, URL parameters override `config.json`:
+On the standalone page only, URL parameters override `config.json`. A link
+can come from anyone, so the URL sets only these, nothing that lets a board do
+more (sound, ZModem auto-start, file sizes):
 
 | Parameter | Option |
 |---|---|
@@ -14,16 +16,26 @@ On the standalone page only, URL parameters override `config.json`:
 | `scale=fit\|integer`, `keys=auto\|on\|off`, `profile=auto\|pc\|amiga` | `scale`, `keyBar`, `profile` |
 | `amigaPalette=ncomm\|term-ega`, `amigaAspect=pal\|ntsc\|<1-3>`, `amigaRows=` | the same |
 | `cols=`, `rows=`, `scrollback=`, `renderer=webgl2\|2d`, `autoReconnect=0/1` | the same |
-| `mute=0/1`, `volume=0-100`, `musicTone=square\|syncterm\|sine` | the same |
-| `zmodemDetect=auto\|ask\|off` | the same |
+| `musicTone=square\|syncterm\|sine` | the same |
+
+An endpoint from the URL never connects by itself, whatever sets
+`autoConnect`: the page asks first ("Connect to this board?", naming the
+address with its host on a line of its own, Cancel focused; an address with a
+user name in it is refused), so a crafted link cannot point the operator's page
+at another board. `connect=1` with the endpoint from `config.json` (or the
+attributes) connects at once.
 
 There are also test hooks, never on by default:
 
 - `naws=0` refuses NAWS, so a host falls back to `CSI 255 n`.
-- `debugDa=cterm` answers DA as CTerm, for ENiGMA builds that only probe CTerm.
-- `debugPanic=1` lets `CSI ? 2026 h` panic the engine, to exercise recovery.
 - `audioLock=1` behaves as if the browser refused audio until a gesture.
 - `audioFallback=1` decodes Ogg with the bundled decoders.
+
+The debug hooks are not URL parameters. A test sets them in the page before
+the terminal loads, e.g. with Playwright's `page.addInitScript`:
+`window.__enigTermTestHooks = { debugCtermDa: true, debugPanic: true }`.
+`debugCtermDa` answers DA as CTerm, for ENiGMA builds that only probe CTerm;
+`debugPanic` lets `CSI ? 2026 h` panic the engine, to exercise recovery.
 
 ## config.json v1
 
@@ -59,7 +71,7 @@ ENiGMA generates `version`, `endpoint` and `title`, then merges its
 | `scrollbackOnClear` | boolean | `true` | Keep the non-blank lines of a screen the host clears. |
 | `autoReconnect` | boolean | `false` | Reconnect after an unexpected close, with backoff (1 s doubling to 30 s, jittered; reset after a session of 10 s or more). |
 | `backspace` | `"bs"` or `"del"` | `"bs"` | Backspace sends `^H` (Delete sends DEL), or the reverse. |
-| `linkSchemes` | string array | `["http:", "https:"]` | OSC 8 link schemes that may be opened. |
+| `linkSchemes` | string array | `["http:", "https:"]` | OSC 8 link schemes that may be opened. `javascript:`, `data:`, `vbscript:`, `file:` and `blob:` never are, even when listed. |
 | `allowInsecure` | boolean | `false` | Allow `ws://` to non-loopback hosts (development only). Not settable from the URL. |
 | `termType` | string | `"ansi-bbs"` | Telnet TTYPE answer. |
 | `renderer` | `"webgl2"` or `"2d"` | `"webgl2"` | Output pass. |
@@ -76,7 +88,7 @@ ENiGMA generates `version`, `endpoint` and `title`, then merges its
 | `audioMaxFile` | integer (MB) 1-64 | `16` | Largest sound file a board may store, load or send. |
 | `audioMemory` | integer (MB) 16-2048 | `192` | Decoded audio held at once (slots and channels). |
 | `transfers` | boolean | `true` | File transfers ([File transfers](transfers.md)): the Files button and ZModem detection. `false`: none (a board's ZModem start shows as text). |
-| `zmodemDetect` | `"auto"`, `"ask"` or `"off"` | `"auto"` | A ZModem download the board starts: begins at once, asks first, or is ignored (its bytes show as text). An upload the board starts always asks for files (unless `off`). A user setting. |
+| `zmodemDetect` | `"ask"`, `"auto"` or `"off"` | `"ask"` | A ZModem download the board starts: asks first (Receive or Refuse), begins at once, or is ignored (its bytes show as text). "ask" keeps a board from starting a download without a click. An upload the board starts always asks for files (unless `off`). A user setting. |
 | `transferMaxFile` | integer (MB) 1-4096 | `512` | Largest file saved through a browser download; a larger one is refused (ZModem skips it, X/YModem stop). A folder the user picked has no limit. |
 
 ## Precedence
@@ -86,9 +98,9 @@ Lowest first:
 1. built-in defaults;
 2. `config.json`;
 3. element attributes, or `mount()` options (the embedding page);
-4. URL parameters, only when `urlParams` is on (the standalone page), and
-   never for `endpoint` when `lockEndpoint` is set, nor for `lock`,
-   `lockEndpoint`, `urlParams`, `allowInsecure`, `linkSchemes` or a locked key;
+4. URL parameters, only when `urlParams` is on (the standalone page), only
+   for the keys in the table above, never for `endpoint` when `lockEndpoint`
+   is set, and never for a locked key;
 5. user settings saved in `localStorage`, only for the user-settable keys and
    only those not in `lock`.
 

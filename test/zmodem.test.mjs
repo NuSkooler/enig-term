@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { ZmodemEngine, loadZmodem } from '../src/transfer/zmodem.ts';
 import { boardLeftAbort } from '../src/transfer/xymodem.ts';
 import { BOARD_LEFT } from '../src/transfer/types.ts';
-import { LRZSZ, SEXYZ, allBytes, peerCommand, random, runPeer, sha, tmpdir } from './xfer-peers.mjs';
+import { LRZSZ, SEXYZ, allBytes, craftedZmodem, peerCommand, random, runPeer, sha, tmpdir } from './xfer-peers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 await loadZmodem(fs.readFileSync(path.join(here, '..', 'build', 'wasm-zmodem', 'enig_term_zmodem_bg.wasm')));
@@ -328,4 +328,38 @@ test('receiving: the board leaves right after a file; the header answering its e
         sz.kill('SIGKILL');
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+async function crafted(files, maxBytes) {
+    let delivered = 0;
+    let result = null;
+    const sent = [];
+    const ends = [];
+    const e = new ZmodemEngine('receive', [], b => sent.push(...b), { fileStart: () => {}, data: c => (delivered += c.length), progress: () => {}, fileEnd: ok => ends.push(ok), done: r => (result = r) }, { now, maxBytes });
+    for (const c of craftedZmodem(files)) e.feed(c);
+    for (let i = 0; i < 50 && !result; i++) {
+        e.tick();
+        await new Promise(r => setTimeout(r, 10));
+    }
+    return { delivered, result, ends, sent };
+}
+
+test('receiving: a file that runs past its announced size, or past maxBytes, is stopped', async () => {
+    // Announced 1000 bytes, sends 5 MB: stopped a subpacket or so past 1000.
+    const a = await crafted([{ name: 'readme.txt', announce: '1000', total: 5 << 20 }], 0);
+    assert.equal(a.result?.ok, false);
+    assert.match(a.result.error, /more than the 1000 bytes it announced/);
+    assert.ok(a.delivered <= 1000 + 8192, `delivered ${a.delivered}`);
+    assert.deepEqual(a.ends, [false]);
+    // Announced within maxBytes, sent past it: stopped at the limit.
+    const b = await crafted([{ name: 'readme.txt', announce: '99000', total: 5 << 20 }], 100_000);
+    assert.equal(b.result?.ok, false);
+    assert.match(b.result.error, /larger than this terminal accepts/);
+    assert.ok(b.delivered <= 100_000, `delivered ${b.delivered}`);
+    // Either way the abort goes out to the board.
+    assert.ok(Buffer.from(a.sent).includes(Buffer.from([0x18, 0x18, 0x18, 0x18, 0x18])));
+    // An honest file of the same shape still arrives.
+    const c = await crafted([{ name: 'ok.bin', announce: '3000', total: 3000 }], 100_000);
+    assert.equal(c.result?.ok, true, c.result?.error);
+    assert.equal(c.delivered, 3000);
 });

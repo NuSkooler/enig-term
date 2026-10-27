@@ -10,7 +10,7 @@ import { encode, cellToUnicode, chunk, charsetForFont } from '../src/encoding.ts
 import { mapKey, keySequence, ctrlChar } from '../src/keymap.ts';
 import { normalize, contains, selectionText, wordAt } from '../src/selection.ts';
 import { checkLink } from '../src/links.ts';
-import { sanitize, resolve, checkEndpoint, fromUrlParams, userMayChange, DEFAULTS } from '../src/config.ts';
+import { sanitize, resolve, checkEndpoint, fromUrlParams, userMayChange, startAction, DEFAULTS } from '../src/config.ts';
 import { ScrollbackView } from '../src/scrollback.ts';
 import { sauceFont, sauceFontName } from '../src/fonts.ts';
 
@@ -54,6 +54,18 @@ test('telnet: TTYPE ansi-bbs, escaped 0xFF data, IAC split across chunks, unknow
     u.receive(new Uint8Array([IAC, SB]));
     u.receive(new Uint8Array([24, 1, IAC]));
     assert.equal(u.receive(new Uint8Array([SE, 0x58])).data[0], 0x58);
+});
+
+test('telnet: an endless subnegotiation is capped near 1 KB, and the stream recovers after IAC SE', () => {
+    const t = new TelnetClient({ termType: 'ansi-bbs', getSize: () => ({ cols: 80, rows: 25 }) });
+    t.receive(new Uint8Array([IAC, SB, 24]));
+    const chunk = new Uint8Array(1 << 16).fill(0x41);
+    let shown = 0;
+    for (let i = 0; i < 64; i++) shown += t.receive(chunk).data.length;
+    shown += t.receive(new Uint8Array(4096).fill(IAC)).data.length; // escaped 0xFFs inside it too
+    assert.equal(shown, 0, 'nothing inside SB is terminal data');
+    assert.ok(t.sb.length <= 1024, `sb holds ${t.sb.length} bytes`);
+    assert.deepEqual([...t.receive(new Uint8Array([IAC, IAC, IAC, SE, 0x58])).data], [0x58]);
 });
 
 test('telnet: NAWS on every resize once negotiated; 255 escaped; refusable for tests', () => {
@@ -209,6 +221,16 @@ test('links: only absolute http(s) by default; shown normalised', () => {
     assert.equal(checkLink('https://x.example/' + 'a'.repeat(3000)).ok, false);
 });
 
+test('links: script, data and local schemes are refused even when linkSchemes lists them', () => {
+    const all = ['http', 'https', 'javascript', 'data:', 'VBScript', 'file', 'blob'];
+    for (const u of ['javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,hi', 'vbscript:msgbox(1)', 'file:///etc/passwd', 'blob:https://x.example/0b1c']) {
+        const r = checkLink(u, all);
+        assert.equal(r.ok, false, u);
+        assert.match(r.reason, /never allowed/, u);
+    }
+    assert.equal(checkLink('https://x.example/', all).ok, true);
+});
+
 // --- config --------------------------------------------------------------------
 
 test('config: sanitize keeps valid keys, drops invalid ones with a warning', () => {
@@ -259,7 +281,35 @@ test('config: lockEndpoint and lock[] stop URL and user overrides', () => {
 test('config: URL parameter names (the v1 contract) map to options', () => {
     const { opts, hooks } = fromUrlParams(new URLSearchParams('endpoint=ws://127.0.0.1:18810&connect=1&crt=0&keys=on&naws=0&debugDa=cterm&bogus=1'));
     assert.deepEqual(sanitize(opts), { endpoint: 'ws://127.0.0.1:18810', autoConnect: true, crt: false, keyBar: 'on' });
-    assert.deepEqual(hooks, { naws: '0', debugDa: 'cterm' });
+    assert.deepEqual(hooks, { naws: '0' }, 'the debug hooks are never read from the URL');
+});
+
+test('config: the URL may not make a board more capable', () => {
+    const q = fromUrlParams(new URLSearchParams('zmodemDetect=auto&mute=0&volume=100&debugPanic=1&transferMaxFile=4096&sound=1&transfers=1'));
+    assert.deepEqual(q.opts, {});
+    assert.deepEqual(q.hooks, {});
+    // resolve() keeps to the same list even if handed more.
+    const o = resolve({ config: { zmodemDetect: 'off', mute: true }, page: { urlParams: true }, url: { zmodemDetect: 'auto', mute: false, volume: 100, crt: true } });
+    assert.equal(o.zmodemDetect, 'off');
+    assert.equal(o.mute, true);
+    assert.equal(o.volume, DEFAULTS.volume);
+    assert.equal(o.crt, true);
+});
+
+test('config: an endpoint from the URL never connects by itself', () => {
+    const run = layers => startAction(resolve({ ...layers, page: { urlParams: true, ...layers.page } }), layers);
+    // The operator's endpoint, autoConnect from anywhere: connect.
+    assert.equal(run({ config: { endpoint: 'wss://good', autoConnect: true } }), 'connect');
+    assert.equal(run({ config: { endpoint: 'wss://good' }, url: { autoConnect: true } }), 'connect');
+    assert.equal(run({ page: { endpoint: 'wss://good', autoConnect: true } }), 'connect');
+    // The URL's endpoint: ask, whoever asked for autoConnect.
+    assert.equal(run({ url: { endpoint: 'wss://evil', autoConnect: true } }), 'ask');
+    assert.equal(run({ config: { endpoint: 'wss://good', autoConnect: true }, url: { endpoint: 'wss://evil' } }), 'ask');
+    // ...unless lockEndpoint threw the URL's endpoint away.
+    assert.equal(run({ config: { endpoint: 'wss://good', autoConnect: true, lockEndpoint: true }, url: { endpoint: 'wss://evil' } }), 'connect');
+    // No autoConnect, or no endpoint: nothing.
+    assert.equal(run({ url: { endpoint: 'wss://evil' } }), null);
+    assert.equal(run({ url: { autoConnect: true } }), null);
 });
 
 test('endpoints: wss only, ws only for loopback or with allowInsecure', () => {
@@ -311,10 +361,10 @@ test('config: transfers, zmodemDetect and transferMaxFile; zmodemDetect is a use
     assert.deepEqual(o, { transfers: false, zmodemDetect: 'ask', transferMaxFile: 64 });
     assert.deepEqual(sanitize({ zmodemDetect: 'always', transferMaxFile: 0 }, w => warns.push(w)), {});
     assert.equal(warns.length, 2);
-    assert.deepEqual([DEFAULTS.transfers, DEFAULTS.zmodemDetect, DEFAULTS.transferMaxFile], [true, 'auto', 512]);
+    assert.deepEqual([DEFAULTS.transfers, DEFAULTS.zmodemDetect, DEFAULTS.transferMaxFile], [true, 'ask', 512], 'a board cannot start a download without a click');
     assert.equal(userMayChange(resolve({}), 'zmodemDetect'), true);
     assert.equal(userMayChange(resolve({ config: { lock: ['zmodemDetect'] } }), 'zmodemDetect'), false);
-    assert.equal(fromUrlParams(new URLSearchParams('zmodemDetect=off')).opts.zmodemDetect, 'off');
+    assert.equal(fromUrlParams(new URLSearchParams('zmodemDetect=auto')).opts.zmodemDetect, undefined, 'not from the URL');
 });
 
 test('Telnet: every byte value survives escaping out and decoding in (transfers run above Telnet)', () => {

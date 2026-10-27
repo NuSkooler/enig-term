@@ -62,6 +62,8 @@ const SCREEN_CSI = 4;
 /** ... and, receiving (file data may hold them), this long a pause after them. */
 const SCREEN_QUIET_MS = 3000;
 const WINDOW_MAX = 65536;
+/** Received bytes past the announced size tolerated before the transfer is stopped (a subpacket). */
+const OVERRUN_SLACK = 8192;
 
 export class ZmodemEngine implements TransferEngine {
     finished = false;
@@ -248,6 +250,18 @@ export class ZmodemEngine implements TransferEngine {
                     case 'data': {
                         const chunk = e.take_data();
                         this.received += chunk.length;
+                        // The size limit is checked against the announced size
+                        // (rt.rs): a sender that announces a small file and
+                        // sends more is stopped here, before the sink buffers it.
+                        const max = this.opts.maxBytes ?? 0;
+                        if (max && this.received > max) {
+                            this.cancel(`the file is larger than this terminal accepts (${max} bytes)`, false);
+                            return false;
+                        }
+                        if (this.announced !== null && this.received > this.announced + OVERRUN_SLACK) {
+                            this.cancel(`the board sent more than the ${this.announced} bytes it announced`, false);
+                            return false;
+                        }
                         const r = this.ev.data?.(chunk);
                         this.ev.progress(this.received);
                         if (r && typeof (r as Promise<void>).then === 'function') {

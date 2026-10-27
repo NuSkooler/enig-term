@@ -64,7 +64,7 @@ test('custom element and mount() on a foreign page: no CSS leakage either way, a
     await expect.poll(() => page.evaluate(() => (window as any).events.map((e: any) => e[0]))).toEqual(expect.arrayContaining(['title', 'bell', 'link']));
     const ev = await page.evaluate(() => (window as any).events);
     expect(ev).toEqual(expect.arrayContaining([['title', 'Board Title'], ['link', 'https://l.example/']]));
-    await expect(page.locator('#el').locator('dialog')).toBeHidden(); // the page handled the link
+    await expect(page.locator('#el').locator('[data-linkdialog]')).toBeHidden(); // the page handled the link
     void CSI;
 });
 

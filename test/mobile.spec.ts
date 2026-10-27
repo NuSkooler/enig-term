@@ -119,13 +119,15 @@ test('a ZModem download and upload on a phone; the key bar works after them', as
     const ui = (s: string) => page.locator('enig-term').locator(s);
     const dl: Download[] = [];
     page.on('download', d => dl.push(d));
-    // download: starts by itself
+    // download: the card asks first (the default), Receive is tapped
     let id = `m-dl-${Date.now()}`;
     await page.evaluate(u => (window as any).enigTerm.connect(u), fakeUrl(page, 'xfer&peer=sz&set=small', id));
     await waitState(page, 'connected');
     await page.waitForTimeout(500);
     await bar(page).locator('[data-key="Escape"]').tap(); // any byte; the script waits for "g"
     await page.evaluate(() => (window as any).enigTerm.sendText('g'));
+    await expect.poll(() => page.evaluate(() => (window as any).enigTerm.transfers.status.phase), { timeout: 20_000 }).toBe('offer');
+    await ui('[data-act="xf-offer-accept"]').tap();
     await expect.poll(() => page.evaluate(() => (window as any).enigTerm.transfers.status.phase), { timeout: 20_000 }).toBe('done');
     await expect.poll(() => dl.length).toBe(1);
     expect(fs.readFileSync((await dl[0].path())!).toString()).toBe('hello, world\r\n');
