@@ -1,0 +1,123 @@
+# Build both WASM modules from a clean checkout, then run the Node unit tests
+# and Playwright (Chromium, Firefox, Pixel 7; WebKit is a non-blocking step).
+# dist/ is uploaded as an artifact.
+#
+# Toolchain pins (bump together with the README's "Build" section):
+#   Rust 1.96.0 + wasm32-unknown-unknown
+#   wasm-bindgen-cli 0.2.129 (must equal the wasm-bindgen crate pin in both
+#     crates' Cargo.toml; scripts/build-wasm.sh relies on its glue layout)
+#   binaryen version_133 (wasm-opt)
+#   Node 22 (mise.toml); Playwright 1.60.0 (package.json)
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: 1.96.0
+  WASM_BINDGEN_VERSION: 0.2.129
+  WASM_BINDGEN_SHA256: 82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e
+  BINARYEN_VERSION: version_133
+  BINARYEN_SHA256: 2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.22.2
+          cache: npm
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          echo "CARGO_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - name: wasm-bindgen-cli and wasm-opt
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools"
+          cd "$RUNNER_TEMP/tools"
+          wb="wasm-bindgen-${WASM_BINDGEN_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSfL -o wb.tgz "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${WASM_BINDGEN_VERSION}/${wb}.tar.gz"
+          echo "${WASM_BINDGEN_SHA256}  wb.tgz" | sha256sum -c -
+          tar xzf wb.tgz
+          curl -sSfL -o binaryen.tgz "https://github.com/WebAssembly/binaryen/releases/download/${BINARYEN_VERSION}/binaryen-${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          echo "${BINARYEN_SHA256}  binaryen.tgz" | sha256sum -c -
+          tar xzf binaryen.tgz
+          echo "WASM_BINDGEN=$RUNNER_TEMP/tools/${wb}/wasm-bindgen" >> "$GITHUB_ENV"
+          echo "WASM_OPT=$RUNNER_TEMP/tools/binaryen-${BINARYEN_VERSION}/bin/wasm-opt" >> "$GITHUB_ENV"
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            crates/enig-term-core/target/
+            crates/enig-term-zmodem/target/
+          key: cargo-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('crates/*/Cargo.lock', 'crates/*/Cargo.toml', 'patches/**') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Build (WASM, then dist/)
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Transfer programs (lrzsz; sexyz is not packaged and its tests skip)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lrzsz
+
+      - name: Node unit tests
+        run: npm run test:unit
+
+      - name: Playwright browsers (Chromium, Firefox)
+        run: npx playwright install --with-deps chromium firefox
+
+      - name: Playwright (Chromium, Firefox, Pixel 7)
+        run: npx playwright test --project=chromium --project=firefox --project=chromium-pixel7
+
+      - name: Playwright WebKit (optional)
+        continue-on-error: true
+        env:
+          ENIG_TERM_REQUIRE_WEBKIT: '1'
+        run: |
+          npx playwright install --with-deps webkit
+          npx playwright test --project=webkit --project=webkit-iphone
+
+      - name: Upload dist/
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: enig-term-dist
+          path: dist/
+          if-no-files-found: warn
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-screenshots
+          path: |
+            test/screenshots/
+            test-results/
+          if-no-files-found: ignore
