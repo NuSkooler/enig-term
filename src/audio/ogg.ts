@@ -21,6 +21,10 @@ export interface Decoded {
 
 /** Most samples per channel decoded (about 300 s at 48 kHz, plus a margin); the engine refuses longer anyway. */
 const MAX_SAMPLES = 48000 * 301;
+/** Most channels decoded (7.1); a file with more is refused, not mixed down. */
+export const MAX_CHANNELS = 8;
+/** Default PCM budget (the engine passes its audioMemory). */
+const MAX_BYTES = 192 << 20;
 
 interface Stream {
     packets: Uint8Array[];
@@ -82,14 +86,22 @@ export function demux(b: Uint8Array): Stream | null {
 
 const ascii = (p: Uint8Array, at: number, n: number) => String.fromCharCode(...p.subarray(at, at + n));
 
-export async function decodeOgg(bytes: Uint8Array): Promise<Decoded | null> {
+/**
+ * Decode an Ogg Vorbis or Opus file. `maxBytes` bounds the decoded PCM
+ * (samples x channels x 4 bytes): decoding stops there, so a small file that
+ * claims many channels or a long stream cannot allocate more.
+ */
+export async function decodeOgg(bytes: Uint8Array, maxBytes = MAX_BYTES): Promise<Decoded | null> {
     const s = demux(bytes);
     if (!s) return null;
     const first = s.packets[0];
-    if (first.length >= 7 && first[0] === 1 && ascii(first, 1, 6) === 'vorbis') return decodeVorbis(s);
-    if (first.length >= 19 && ascii(first, 0, 8) === 'OpusHead') return decodeOpus(s);
+    if (first.length >= 16 && first[0] === 1 && ascii(first, 1, 6) === 'vorbis') return decodeVorbis(s, maxBytes);
+    if (first.length >= 19 && ascii(first, 0, 8) === 'OpusHead') return decodeOpus(s, maxBytes);
     return null;
 }
+
+/** Samples per channel that fit both MAX_SAMPLES and the byte budget. */
+const sampleCap = (channels: number, maxBytes: number) => Math.min(MAX_SAMPLES, Math.floor(maxBytes / (channels * 4)));
 
 function concat(parts: Float32Array[][], channels: number, limit: number): Float32Array[] {
     let n = 0;
@@ -112,9 +124,13 @@ interface Common {
     free(): void;
 }
 
-async function decodeVorbis(s: Stream): Promise<Decoded | null> {
+async function decodeVorbis(s: Stream, maxBytes: number): Promise<Decoded | null> {
     if (s.packets.length < 3) return null;
     const [id, , setup] = s.packets;
+    // Identification header: channel count at 11.
+    const declared = id[11];
+    if (!declared || declared > MAX_CHANNELS) return null;
+    const cap = sampleCap(declared, maxBytes);
     const common = (await new (WASMAudioDecoderCommon as unknown as new () => { instantiate(w: unknown, m: unknown): Promise<Common> })().instantiate(VorbisWASM, undefined)) as Common;
     const maxIn = Math.max(128 * 1024, ...s.packets.map(p => p.length));
     const input = common.allocateTypedArray(maxIn, Uint8Array);
@@ -141,20 +157,21 @@ async function decodeVorbis(s: Stream): Promise<Decoded | null> {
         const parts: Float32Array[][] = [];
         let total = 0;
         let nch = 0;
-        for (let i = 3; i < s.packets.length && total < MAX_SAMPLES; i++) {
+        for (let i = 3; i < s.packets.length && total < cap; i++) {
             send(s.packets[i]);
             w.decode_packets(dec);
             errLen.buf[0] = 0;
             const n = samples.buf[0];
             nch = channels.buf[0];
             if (!n || !nch) continue;
+            if (nch > declared) return null;
             const ptrs = new Uint32Array(w.HEAP, outPtr.buf[0], nch);
             parts.push(Array.from({ length: nch }, (_, c) => new Float32Array(w.HEAP, ptrs[c], n).slice()));
             total += n;
         }
         if (!total || !nch) return null;
         // The last granule position is the stream's length in samples.
-        const limit = s.granule > 0 ? Math.min(s.granule, MAX_SAMPLES) : MAX_SAMPLES;
+        const limit = s.granule > 0 ? Math.min(s.granule, cap) : cap;
         return { channelData: concat(parts, nch, limit), sampleRate: rate.buf[0] || 44100 };
     } finally {
         w.destroy_decoder(dec);
@@ -162,7 +179,7 @@ async function decodeVorbis(s: Stream): Promise<Decoded | null> {
     }
 }
 
-async function decodeOpus(s: Stream): Promise<Decoded | null> {
+async function decodeOpus(s: Stream, maxBytes: number): Promise<Decoded | null> {
     const h = s.packets[0];
     const dv = new DataView(h.buffer, h.byteOffset, h.byteLength);
     const channels = h[9];
@@ -178,7 +195,8 @@ async function decodeOpus(s: Stream): Promise<Decoded | null> {
         coupledStreamCount = h[20];
         channelMappingTable = Array.from(h.subarray(21, 21 + channels));
     }
-    if (!channels) return null;
+    if (!channels || channels > MAX_CHANNELS) return null;
+    const cap = sampleCap(channels, maxBytes);
     const dec = new OpusDecoder({ channels, streamCount, coupledStreamCount, channelMappingTable, preSkip, sampleRate: 48000 } as never) as unknown as {
         ready: Promise<void>;
         decodeFrame(f: Uint8Array): { channelData: Float32Array[]; samplesDecoded: number };
@@ -189,7 +207,7 @@ async function decodeOpus(s: Stream): Promise<Decoded | null> {
         const parts: Float32Array[][] = [];
         let total = 0;
         // Packet 0 is OpusHead, 1 OpusTags.
-        for (let i = 2; i < s.packets.length && total < MAX_SAMPLES; i++) {
+        for (let i = 2; i < s.packets.length && total < cap; i++) {
             const r = dec.decodeFrame(s.packets[i]);
             if (!r.samplesDecoded) continue;
             parts.push(r.channelData.map(c => c.slice(0, r.samplesDecoded)));
@@ -197,7 +215,7 @@ async function decodeOpus(s: Stream): Promise<Decoded | null> {
         }
         if (!total) return null;
         const nch = parts[0].length;
-        const limit = s.granule > preSkip ? Math.min(s.granule - preSkip, MAX_SAMPLES) : MAX_SAMPLES;
+        const limit = s.granule > preSkip ? Math.min(s.granule - preSkip, cap) : cap;
         const out = concat(parts, nch, limit);
         if (gainDb) {
             const g = Math.pow(10, gainDb / 20);

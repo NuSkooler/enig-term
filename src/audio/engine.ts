@@ -110,7 +110,7 @@ export interface EngineDeps {
 }
 
 interface OggModule {
-    decodeOgg(bytes: Uint8Array): Promise<{ channelData: Float32Array[]; sampleRate: number } | null>;
+    decodeOgg(bytes: Uint8Array, maxBytes: number): Promise<{ channelData: Float32Array[]; sampleRate: number } | null>;
 }
 
 declare const __ENIG_TERM_OGG_HASH__: string | undefined;
@@ -375,7 +375,7 @@ export class AudioEngine {
         }
         const mod = await this.ogg;
         if (!mod) return null;
-        const r = await withTimeout(mod.decodeOgg(data).catch(() => null), this.opts.decodeMs);
+        const r = await withTimeout(mod.decodeOgg(data, this.opts.memoryBytes).catch(() => null), this.opts.decodeMs);
         if (!r || !r.channelData.length || !r.channelData[0].length) return null;
         this.stats.fallbackDecodes++;
         const len = Math.min(r.channelData[0].length, Math.ceil(MAX_SECONDS * r.sampleRate) + 1);

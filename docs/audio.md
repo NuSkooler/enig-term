@@ -156,6 +156,8 @@ without breaking the session.
 | Decoded audio held in slots and on channels | 192 MB | `audioMemory` (MB) |
 | Length of one decoded or synthesised buffer | 300 s | |
 | One decode (browser or Ogg decoder) | 15 s | |
+| Channels in one file decoded by the bundled Ogg decoders (more is refused) | 8 | |
+| PCM one bundled Ogg decode produces (samples x channels x 4 bytes; decoding stops there) | 192 MB | follows `audioMemory` |
 | Buffers per channel / on all channels (queued or playing) | 64 / 128 | |
 | One "ANSI" music string | 1022 characters (CTerm's), 120 s of sound | |
 | Holding the stream (`Wait`, foreground music) | 5 min, or 32 MB of host data meanwhile | |

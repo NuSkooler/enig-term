@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The bundled Ogg decoders refuse a file of more than 8 channels, and stop
+  decoding once the PCM (samples x channels x 4 bytes) would pass
+  `audioMemory`. A half-megabyte Opus file claiming 255 channels froze the
+  tab for seconds and took gigabytes of memory.
+
 ## 0.1.1 - 2026-10-27
 
 - A ZModem upload of two small files, each with a damaged start, no longer
