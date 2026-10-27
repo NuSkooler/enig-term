@@ -10,6 +10,9 @@
   262144 pages or packets. 16 MB of empty pages made 15 million packets
   (36 s, about 3 GB), and a Vorbis file of many small packets overflowed
   the stack.
+- Nested CTerm macros expand at most 4 MB of macro text per top-level
+  invocation (icy_tools patch 0002, upstream PR mkrueger/icy_tools#197).
+  About 100 bytes of macros that invoke each other hung the tab for good.
 
 ## 0.1.1 - 2026-10-27
 

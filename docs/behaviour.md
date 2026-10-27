@@ -85,12 +85,15 @@ ends, after at most 5 minutes.
 A selection of a font the terminal does not have gets a one-time toast; see
 [Font notices](fonts.md#font-notices).
 
-## Known limit: CTerm macros
+## CTerm macros
 
-CTerm macros (`DCS ... !z`, invoked by `CSI Pn * z`) can be chained so that
-expanding them takes exponential time inside the parser. That hangs the tab
-rather than crashing the engine, and there is no hook to stop it from outside
-the parser. It is an upstream ask.
+CTerm macros (`DCS ... !z`, invoked by `CSI Pn * z`) can invoke each other, so
+a few bytes of definitions could expand exponentially and hang the tab. Each
+top-level invocation may expand at most 4 MB of macro text (4 x SyncTERM's
+`MAX_MACRO_LEN`), nested invocations included; the rest of that expansion is
+dropped. The next invocation starts with a fresh budget. This is
+`patches/icy_tools/0002-bound-nested-macro-expansion.patch`, from upstream
+PR mkrueger/icy_tools#197.
 
 ## Throughput
 

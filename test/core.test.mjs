@@ -425,3 +425,18 @@ test('fast line-moving scroll matches the engine cell-by-cell scroll (fuzzed)', 
     }
     assert.equal(fast.scrollback_len(), slow.scrollback_len());
 });
+
+test('nested CTerm macros expand within a budget per top-level invocation (patch 0002)', () => {
+    const hex = s => [...s].map(ch => ch.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+    // Macro 3 prints "x"; macros 2, 1 and 0 each run the next one 255 times: 16.6 million "x"s from about 110 bytes.
+    let p = `${ESC}P3;0;1!z${hex('x')}${ST}`;
+    for (let d = 2; d >= 0; d--) p += `${ESC}P${d};0;1!z!255;${hex(`${ESC}[${d + 1}*z`)};${ST}`;
+    const c = new Core(80, 25, 'ansi');
+    c.feed(bytes(p));
+    const t = performance.now();
+    c.feed(bytes(`${CSI}0*z`));
+    assert.ok(performance.now() - t < 1000, `${(performance.now() - t).toFixed(0)} ms`);
+    // The budget is per invocation: a small nested macro still expands in full afterwards.
+    c.feed(bytes(`${ESC}P4;0;1!z!3;${hex(`${ESC}[3*z`)};${ST}${CSI}H${CSI}2J${CSI}4*z`));
+    assert.equal(c.cursor_x(), 3);
+});

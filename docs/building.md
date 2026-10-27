@@ -57,12 +57,15 @@ checkout is shallow, about 125 MB on disk. Set `ICY_TOOLS_GIT=` to a local
 clone for offline builds. The `[patch."https://github.com/mkrueger/icy_tools"]`
 section in Cargo.toml builds icy_engine and icy_parser_core from there.
 
-There is one patch, `0001-no-embedded-fonts.patch` (7 files, about 40 lines).
-It removes every font compiled into icy_engine. It shadows
+There are two patches. `0001-no-embedded-fonts.patch` (7 files, about 40
+lines) removes every font compiled into icy_engine. It shadows
 `include_bytes!`/`include_str!` for the crate with macros that yield empty
 data, makes `BitFont::from_bytes` refuse empty data, and turns the unwraps on
 built-in fonts into a blank placeholder. The shell loads the fonts it ships
-instead (see [Fonts](fonts.md)).
+instead (see [Fonts](fonts.md)). `0002-bound-nested-macro-expansion.patch`
+bounds nested CTerm macro expansion (see
+[Behaviour](behaviour.md#cterm-macros)); it is upstream PR
+mkrueger/icy_tools#197 and can be dropped once the pin includes it.
 
 ## ZModem: a second WASM module
 
@@ -79,9 +82,11 @@ change is in [File transfers](transfers.md#how-it-is-built).
 ## Rebasing icy_tools
 
 1. Change both `rev = "..."` values in `crates/enig-term-core/Cargo.toml`.
-2. Run `scripts/prepare-icy.sh`. If the patch no longer applies, fix it in
+2. Run `scripts/prepare-icy.sh`. If a patch no longer applies, fix it in
    `build/icy_tools/` and save it again with
-   `git -C build/icy_tools diff > patches/icy_tools/0001-no-embedded-fonts.patch`.
+   `git -C build/icy_tools diff > patches/icy_tools/0001-no-embedded-fonts.patch`
+   (patches apply in name order, so regenerate a later one against a
+   checkout with the earlier ones committed).
    The intent is in the patch's comments: no font data compiled in, no panic
    on a missing built-in font. Check for new `include_bytes!` users that are
    not fonts, since the shadowing macros would empty them too. There are none
