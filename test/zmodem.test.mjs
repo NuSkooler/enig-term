@@ -179,6 +179,48 @@ test('upload reads the file in windows (never whole) and paces output by canSend
     assert.ok(res.ms >= 1400 || Date.now() - t0 >= 1400, 'output waited for canSend');
 });
 
+test('us -> rz: two small files, each with a damaged start; the ZRPOS 0 for the second is honoured too', { skip: !LRZSZ && 'lrzsz not installed' }, async () => {
+    // One byte of each file's first data subpacket is damaged on the way out,
+    // so rz asks for ZRPOS 0 on each, well within a second of each other.
+    // The second must not be taken for a repeat of the first (patch 0003).
+    const files = [['one.txt', enc('ONE-FIRST-DATA\n'.repeat(40))], ['two.txt', enc('TWO-FIRST-DATA\n'.repeat(40))]];
+    const marks = ['ONE-FIRST-DATA', 'TWO-FIRST-DATA'].map(enc);
+    const damaged = [false, false];
+    const at = (b, m) => {
+        for (let i = 0; i + m.length <= b.length; i++) if (m.every((x, j) => b[i + j] === x)) return i;
+        return -1;
+    };
+    const dir = tmpdir();
+    const res = await runPeer(
+        peerCommand('rz', dir),
+        io =>
+            new ZmodemEngine(
+                'send',
+                files.map(([n, d]) => src(n, d)),
+                u8 => {
+                    const i = damaged.findIndex(d => !d);
+                    const p = i < 0 ? -1 : at(u8, marks[i]);
+                    if (p >= 0) {
+                        damaged[i] = true;
+                        u8 = Uint8Array.from(u8);
+                        u8[p + 4] ^= 0x01;
+                    }
+                    io.send(u8);
+                },
+                { ...quiet(), done: x => io.done(x) },
+                { now },
+            ),
+        { timeout: 30_000 },
+    );
+    const got = Object.fromEntries(fs.readdirSync(dir).map(n => [n, fs.readFileSync(path.join(dir, n))]));
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.deepEqual(damaged, [true, true], 'both starts damaged');
+    assert.equal(res.result.ok, true, `${JSON.stringify(res.result)}\n${res.stderr.slice(-1500)}`);
+    assert.equal(res.exit.code, 0, res.stderr.slice(-1500));
+    for (const [n, d] of files) assert.equal(sha(got[n] ?? ''), sha(d), `${n} differs`);
+    assert.ok(res.ms < 5000, `took ${res.ms} ms (a stall until rz times out)`);
+});
+
 test('a slow (asynchronous) sink holds the session; the file still arrives whole', { skip: !LRZSZ && 'lrzsz not installed' }, async () => {
     let writes = 0;
     const { res, r } = await download('sz', 'allbytes', {
