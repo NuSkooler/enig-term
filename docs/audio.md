@@ -157,6 +157,7 @@ without breaking the session.
 | Length of one decoded or synthesised buffer | 300 s | |
 | One decode (browser or Ogg decoder) | 15 s | |
 | Channels in one file decoded by the bundled Ogg decoders (more is refused) | 8 | |
+| Ogg pages / packets in one file read by the bundled decoders (empty packets skipped) | 262144 / 262144 | |
 | PCM one bundled Ogg decode produces (samples x channels x 4 bytes; decoding stops there) | 192 MB | follows `audioMemory` |
 | Buffers per channel / on all channels (queued or playing) | 64 / 128 | |
 | One "ANSI" music string | 1022 characters (CTerm's), 120 s of sound | |

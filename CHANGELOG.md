@@ -6,6 +6,10 @@
   decoding once the PCM (samples x channels x 4 bytes) would pass
   `audioMemory`. A half-megabyte Opus file claiming 255 channels froze the
   tab for seconds and took gigabytes of memory.
+- The Ogg page reader skips empty packets and refuses a file of more than
+  262144 pages or packets. 16 MB of empty pages made 15 million packets
+  (36 s, about 3 GB), and a Vorbis file of many small packets overflowed
+  the stack.
 
 ## 0.1.1 - 2026-10-27
 

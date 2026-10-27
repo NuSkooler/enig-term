@@ -26,6 +26,14 @@ export const MAX_CHANNELS = 8;
 /** Default PCM budget (the engine passes its audioMemory). */
 const MAX_BYTES = 192 << 20;
 
+/**
+ * Most pages and packets read from one file (more is refused). 300 s of Opus
+ * in 2.5 ms frames is 120000 packets; a hostile file of empty pages or
+ * packets would otherwise cost memory per page or packet, not per byte.
+ */
+const MAX_PAGES = 1 << 18;
+const MAX_PACKETS = 1 << 18;
+
 interface Stream {
     packets: Uint8Array[];
     /** Granule position of the last page that had one (-1: none). */
@@ -38,9 +46,10 @@ export function demux(b: Uint8Array): Stream | null {
     let off = 0;
     let serial: number | null = null;
     const packets: Uint8Array[] = [];
-    let partial: Uint8Array[] = [];
+    const partial: Uint8Array[] = [];
     let granule = -1;
     let total = 0;
+    let pages = 0;
     while (off + 27 <= b.length) {
         if (b[off] !== 0x4f || b[off + 1] !== 0x67 || b[off + 2] !== 0x67 || b[off + 3] !== 0x53 || b[off + 4] !== 0) {
             // Resync on the next capture pattern.
@@ -56,15 +65,17 @@ export function demux(b: Uint8Array): Stream | null {
         for (let i = 0; i < nseg; i++) size += b[off + 27 + i];
         const body = off + 27 + nseg;
         if (body + size > b.length) break;
+        if (++pages > MAX_PAGES) return null;
         if (serial === null) serial = ser;
         if (ser === serial) {
             if (hi !== -1 || lo !== 0xffffffff) granule = hi * 2 ** 32 + lo;
             let p = body;
             for (let i = 0; i < nseg; i++) {
                 const len = b[off + 27 + i];
-                partial.push(b.subarray(p, p + len));
+                if (len) partial.push(b.subarray(p, p + len));
                 p += len;
-                if (len < 255) {
+                // An empty packet carries nothing to decode (Opus treats it as a lost one).
+                if (len < 255 && partial.length) {
                     const n = partial.reduce((s, x) => s + x.length, 0);
                     const pkt = new Uint8Array(n);
                     let o = 0;
@@ -73,9 +84,9 @@ export function demux(b: Uint8Array): Stream | null {
                         o += x.length;
                     }
                     packets.push(pkt);
+                    partial.length = 0;
                     total += n;
-                    partial = [];
-                    if (total > 64 << 20) return null;
+                    if (total > 64 << 20 || packets.length > MAX_PACKETS) return null;
                 }
             }
         }
@@ -132,7 +143,9 @@ async function decodeVorbis(s: Stream, maxBytes: number): Promise<Decoded | null
     if (!declared || declared > MAX_CHANNELS) return null;
     const cap = sampleCap(declared, maxBytes);
     const common = (await new (WASMAudioDecoderCommon as unknown as new () => { instantiate(w: unknown, m: unknown): Promise<Common> })().instantiate(VorbisWASM, undefined)) as Common;
-    const maxIn = Math.max(128 * 1024, ...s.packets.map(p => p.length));
+    // (A loop: spreading every packet into Math.max overflows the stack.)
+    let maxIn = 128 * 1024;
+    for (const p of s.packets) if (p.length > maxIn) maxIn = p.length;
     const input = common.allocateTypedArray(maxIn, Uint8Array);
     const inputLen = common.allocateTypedArray(1, Uint32Array);
     const outPtr = common.allocateTypedArray(1, Uint32Array);

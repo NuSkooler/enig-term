@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { decodeOgg, MAX_CHANNELS } from '../src/audio/ogg.ts';
+import { decodeOgg, demux, MAX_CHANNELS } from '../src/audio/ogg.ts';
 
 const fixture = f => new Uint8Array(fs.readFileSync(new URL(`./fixtures/audio/${f}`, import.meta.url)));
 
@@ -87,4 +87,34 @@ test(`more than ${MAX_CHANNELS} channels is refused before decoding (the 255-cha
     const at = Buffer.from(v).indexOf('\x01vorbis', 0, 'latin1');
     v[at + 11] = 9;
     assert.equal(await channels(v), 0);
+});
+
+test('pages and packets are capped, and empty packets cost nothing', () => {
+    // Pages of 255 empty packets each (no body): 15 million packets in 16 MB before.
+    const empty = new Uint8Array(27 + 255);
+    empty.set([0x4f, 0x67, 0x67, 0x53, 0]);
+    empty[26] = 255;
+    const n = Math.floor((4 << 20) / empty.length);
+    const b = new Uint8Array(n * empty.length);
+    for (let i = 0; i < n; i++) b.set(empty, i * empty.length);
+    let t = performance.now();
+    assert.equal(demux(b)?.packets.length ?? 0, 0);
+    assert.ok(performance.now() - t < 1000, `${performance.now() - t} ms`);
+    // 300000 pages of one 1-byte packet each: over both caps.
+    const tiny = Buffer.from(page(0, 0, [Buffer.from([1])]));
+    const many = new Uint8Array(tiny.length * 300000);
+    for (let i = 0; i < 300000; i++) many.set(tiny, i * tiny.length);
+    t = performance.now();
+    assert.equal(demux(many)?.packets.length ?? 0, 0);
+    assert.ok(performance.now() - t < 2000, `${performance.now() - t} ms`);
+});
+
+test('a Vorbis file of 200000 small packets decodes (no spread of every packet into Math.max)', async () => {
+    const s = demux(fixture('vorbis.ogg'));
+    const pk = s.packets[4];
+    const pages = [page(0, 0, [s.packets[0]], 2), page(1, 0, [s.packets[1], s.packets[2]])];
+    for (let i = 0; i < 1000; i++) pages.push(page(2 + i, 6000 * (i + 1), Array.from({ length: 200 }, () => pk)));
+    const r = await decodeOgg(new Uint8Array(Buffer.concat(pages)), 1 << 16);
+    assert.ok(r && r.channelData[0].length > 0);
+    assert.ok(pcmBytes(r) <= 1 << 16);
 });
