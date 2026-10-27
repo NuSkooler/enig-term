@@ -14,9 +14,10 @@ enig-term (upstream PRs #197, #198 and #199).
   output clock.
 - Patch 0002 (nested macro expansion) is dropped: it is upstream.
 - Patch 0001 (no embedded fonts) is dropped. icy_engine is built without
-  its new embedded-fonts feature instead. A one-file patch,
+  its new embedded-fonts feature instead. A small patch,
   0001-bgi-fonts-follow-embedded-fonts.patch, leaves out the BGI stroke
-  fonts, which that feature does not cover. The WASM still holds no font
+  fonts, which that feature does not cover, and makes a missing one an
+  empty font rather than a panic. The WASM still holds no font
   data.
 - CTerm modes 31, 32, 34 and 35 are applied by icy_engine as text is
   written; enig-term no longer tracks them itself. One change: with iCE

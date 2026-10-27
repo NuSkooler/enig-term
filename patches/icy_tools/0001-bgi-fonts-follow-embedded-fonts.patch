@@ -1,14 +1,42 @@
+diff --git a/crates/icy_engine/src/palette_screen_buffer/bgi/font.rs b/crates/icy_engine/src/palette_screen_buffer/bgi/font.rs
+index a213681..f90e801 100644
+--- a/crates/icy_engine/src/palette_screen_buffer/bgi/font.rs
++++ b/crates/icy_engine/src/palette_screen_buffer/bgi/font.rs
+@@ -31,6 +31,22 @@ pub struct Font {
+ }
+ 
+ impl Font {
++    /// enig-term patch: a font without characters (the stroke font data is not compiled in).
++    pub fn empty() -> Self {
++        Self {
++            name: String::new(),
++            size: 0,
++            characters: Vec::new(),
++            org_to_cap: 0,
++            org_to_base: 0,
++            org_to_dec: 0,
++            capital_height: 0,
++            base_height: 0,
++            descender_height: 0,
++            lower_case_height: 0,
++        }
++    }
++
+     pub fn height(&self) -> i32 {
+         self.org_to_cap.abs() as i32 + self.org_to_dec.abs() as i32
+     }
 diff --git a/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs b/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs
-index e3d0209..84f49f5 100644
+index e3d0209..27f3db0 100644
 --- a/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs
 +++ b/crates/icy_engine/src/palette_screen_buffer/bgi/mod.rs
-@@ -156,18 +156,21 @@ impl FontType {
+@@ -156,18 +156,22 @@ impl FontType {
  lazy_static::lazy_static! {
      pub static ref DEFAULT_BITFONT : BitFont = crate::rip::RIPTERM_FONT.clone();
  
 +    // enig-term patch (patches/icy_tools/0001-bgi-fonts-follow-embedded-fonts.patch):
 +    // the BGI stroke fonts are not under data/fonts, so the embedded-fonts
-+    // feature does not cover them; font_bytes! leaves them out with it.
++    // feature does not cover them; font_bytes! leaves them out with it, and a
++    // font that does not load is an empty one (it draws nothing), not a panic.
      static ref FONTS: Vec<Font> = vec![
 -        Font::load(include_bytes!("fonts/SANS.CHR")).unwrap(),
 -        Font::load(include_bytes!("fonts/TRIP.CHR")).unwrap(),
@@ -21,17 +49,36 @@ index e3d0209..84f49f5 100644
 -        Font::load(include_bytes!("fonts/LCOM.CHR")).unwrap(),
 -        Font::load(include_bytes!("fonts/EURO.CHR")).unwrap(),
 -        Font::load(include_bytes!("fonts/BOLD.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/SANS.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/TRIP.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/LITT.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/SANS.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/GOTH.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/SCRI.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/SIMP.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/TSCR.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/LCOM.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/EURO.CHR")).unwrap(),
-+        Font::load(font_bytes!("fonts/BOLD.CHR")).unwrap(),
++        Font::load(font_bytes!("fonts/SANS.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/TRIP.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/LITT.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/SANS.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/GOTH.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/SCRI.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/SIMP.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/TSCR.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/LCOM.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/EURO.CHR")).unwrap_or_else(|_| Font::empty()),
++        Font::load(font_bytes!("fonts/BOLD.CHR")).unwrap_or_else(|_| Font::empty()),
      ];
  }
  
+@@ -2754,3 +2758,18 @@ fn already_drawn(fill_lines: &[Vec<LineInfo>], x: i32, y: i32) -> bool {
+     }
+     false
+ }
++
++#[cfg(test)]
++mod enig_term_tests {
++    use super::*;
++
++    // enig-term patch: with the fonts left out (no embedded-fonts), every
++    // font type must still resolve, to an empty font, not panic.
++    #[test]
++    #[cfg(not(feature = "embedded-fonts"))]
++    fn bgi_fonts_absent_do_not_panic() {
++        for t in 0..=12u8 {
++            assert_eq!(FontType::from(t).font().height(), 0);
++        }
++    }
++}

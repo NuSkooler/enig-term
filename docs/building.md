@@ -63,11 +63,15 @@ No font is compiled into icy_engine: Cargo.toml turns off its default
 features, and with them `embedded-fonts`. Font lookups then find nothing
 built in, and the shell loads the fonts it ships instead (see
 [Fonts](fonts.md)). There is one patch.
-`0001-bgi-fonts-follow-embedded-fonts.patch` (one file) puts the BGI stroke
+`0001-bgi-fonts-follow-embedded-fonts.patch` (two files) puts the BGI stroke
 fonts (`palette_screen_buffer/bgi/fonts/*.CHR`, about 125 KB, used only by
 RIP) under the same `font_bytes!` macro, because they are not under
-`data/fonts` and the feature does not cover them. Without it they are
-compiled into the WASM. It can go once upstream gates them too.
+`data/fonts` and the feature does not cover them, and makes a font that is
+not there an empty one instead of a panic. Without it they are compiled into
+the WASM. enig-term's screens are text screens, so nothing reaches them; the
+patch's own Rust test (`cargo test -p icy_engine --no-default-features --lib
+bgi_fonts_absent` in `build/icy_tools`) checks that they would not panic. It
+can go once upstream gates them too.
 
 ## ZModem: a second WASM module
 
