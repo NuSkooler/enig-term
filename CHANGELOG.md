@@ -10,6 +10,11 @@
   262144 pages or packets. 16 MB of empty pages made 15 million packets
   (36 s, about 3 GB), and a Vorbis file of many small packets overflowed
   the stack.
+- The bundled Ogg decoders run in a module Worker, terminated when a decode
+  passes the 15 s limit, so a slow or hostile file no longer blocks the page.
+  Under a Content Security Policy the Worker needs `worker-src 'self'` (the
+  default when `script-src` allows the page's origin). Where no Worker can
+  start, they run on the page's thread as before.
 - Nested CTerm macros expand at most 4 MB of macro text per top-level
   invocation (icy_tools patch 0002, upstream PR mkrueger/icy_tools#197).
   About 100 bytes of macros that invoke each other hung the tab for good.

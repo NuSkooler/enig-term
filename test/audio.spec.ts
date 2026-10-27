@@ -274,6 +274,63 @@ async function decodeAll(page: Page, fallback: boolean) {
     );
 }
 
+/** One Ogg page (enig-term's reader does not check the CRC, so it is left 0). */
+function oggPage(seq: number, granule: number, packets: Buffer[], flags = 0) {
+    const lacing: number[] = [];
+    for (const p of packets) {
+        let n = p.length;
+        while (n >= 255) {
+            lacing.push(255);
+            n -= 255;
+        }
+        lacing.push(n);
+    }
+    const h = Buffer.alloc(27 + lacing.length);
+    h.write('OggS', 0, 'latin1');
+    h[5] = flags;
+    h.writeUInt32LE(granule >>> 0, 6);
+    h.writeUInt32LE(1, 14);
+    h.writeUInt32LE(seq, 18);
+    h[26] = lacing.length;
+    lacing.forEach((l, i) => (h[27 + i] = l));
+    return Buffer.concat([h, ...packets]);
+}
+
+/** A long 8-channel Ogg Opus file: 8 uncoupled streams, each the fixture's audio packets over and over. */
+function longOpus(fixture: Buffer, packets: number) {
+    // The fixture's audio packets (one frame each, under 252 bytes): pages 2 on.
+    const audio: Buffer[] = [];
+    for (let off = 0, page = 0; off < fixture.length; page++) {
+        const nseg = fixture[off + 26];
+        let p = off + 27 + nseg;
+        for (let i = 0; i < nseg; i++) {
+            const len = fixture[off + 27 + i];
+            if (page >= 2 && len > 0) audio.push(fixture.subarray(p, p + len));
+            p += len;
+        }
+        off = p;
+    }
+    const head = Buffer.alloc(29);
+    head.write('OpusHead', 0, 'latin1');
+    head[8] = 1;
+    head[9] = 8;
+    head.writeUInt32LE(48000, 12);
+    head[18] = 255;
+    head[19] = 8;
+    for (let i = 0; i < 8; i++) head[21 + i] = i;
+    const pages = [oggPage(0, 0, [head], 2), oggPage(1, 0, [Buffer.from('OpusTags\0\0\0\0\0\0\0\0', 'latin1')])];
+    // Every stream's packet but the last is self-delimited: TOC, length, data.
+    const delimited = (a: Buffer) => Buffer.concat([a.subarray(0, 1), Buffer.from([a.length - 1]), a.subarray(1)]);
+    for (let i = 0, seq = 2; i < packets; i += 20, seq++) {
+        const batch = Array.from({ length: 20 }, (_, k) => {
+            const a = audio[(i + k) % audio.length];
+            return Buffer.concat([...Array.from({ length: 7 }, () => delimited(a)), a]);
+        });
+        pages.push(oggPage(seq, 0xffffffff, batch));
+    }
+    return Buffer.concat(pages);
+}
+
 test.describe('formats', () => {
     test.beforeEach(async ({ page }) => open(page));
 
@@ -301,6 +358,42 @@ test.describe('formats', () => {
         }
         // Only Ogg goes to them: the others still decode natively.
         expect(r['wav-16.wav'].fallback).toBe(false);
+    });
+
+    test('the bundled Ogg decoders run in a Worker: the page stays responsive, and a decode past decodeMs is stopped', async ({ page }) => {
+        // About 3 s of decoding on one thread: 8 Opus streams of 15000 packets each.
+        const file = longOpus(fs.readFileSync(path.join(process.cwd(), 'test', 'fixtures', 'audio', 'opus.opus')), 15000).toString('base64');
+        const r = await page.evaluate(async b64 => {
+            const m = await import('/enig-term-audio.js' as string);
+            const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            const ctx = new OfflineAudioContext(1, 48000, 48000);
+            const run = async (decodeMs: number) => {
+                const e = new m.AudioEngine({ reply() {}, log() {}, board: () => 't' }, { maxFile: 1 << 24, cacheBytes: 1 << 24, memoryBytes: 1 << 28, decodeMs, musicTone: 'square', forceFallback: true, clock: () => 0 }, m.browserDeps(ctx, { clock: () => 0 }));
+                // The longest gap between timer ticks is how long the page was blocked.
+                let gap = 0;
+                let last = performance.now();
+                const tick = setInterval(() => {
+                    const n = performance.now();
+                    gap = Math.max(gap, n - last);
+                    last = n;
+                }, 20);
+                const t = performance.now();
+                const buf = await e.decode(bytes);
+                const ms = performance.now() - t;
+                gap = Math.max(gap, performance.now() - last);
+                clearInterval(tick);
+                return { ok: !!buf, channels: buf ? (buf.data as AudioBuffer).numberOfChannels : 0, ms, gap, stats: { ...e.stats } };
+            };
+            return { stopped: await run(300), full: await run(20000) };
+        }, file);
+        // Stopped at decodeMs, without waiting for the decode and without blocking the page.
+        expect(r.stopped.ms, JSON.stringify(r.stopped)).toBeLessThan(1500);
+        expect(r.stopped.gap, JSON.stringify(r.stopped)).toBeLessThan(250);
+        expect(r.stopped.ok).toBe(false);
+        expect(r.stopped.stats.decodeTimeouts).toBe(1);
+        // Given time, the same file decodes there (8 channels, the budget's worth).
+        expect(r.full.ok && r.full.stats.workerDecodes === 1, JSON.stringify(r.full)).toBe(true);
+        expect(r.full.channels).toBe(8);
     });
 });
 

@@ -155,7 +155,7 @@ without breaking the session.
 | The cache in IndexedDB, all boards together (least recently used dropped) | 64 MB | `audioCache` (MB) |
 | Decoded audio held in slots and on channels | 192 MB | `audioMemory` (MB) |
 | Length of one decoded or synthesised buffer | 300 s | |
-| One decode (browser or Ogg decoder) | 15 s | |
+| One decode (browser or Ogg decoder; the Ogg decoder's Worker is terminated) | 15 s | |
 | Channels in one file decoded by the bundled Ogg decoders (more is refused) | 8 | |
 | Ogg pages / packets in one file read by the bundled decoders (empty packets skipped) | 262144 / 262144 | |
 | PCM one bundled Ogg decode produces (samples x channels x 4 bytes; decoding stops there) | 192 MB | follows `audioMemory` |
@@ -174,6 +174,19 @@ are libvorbis and libopus compiled to WebAssembly by
 libraries BSD-3-Clause), with enig-term's own Ogg page reader.
 `enig-term-ogg.js` (about 120 KB gzipped) is fetched only when a browser fails
 to decode an Ogg file itself.
+
+The bundled decoders run in a module Worker started from `enig-term-ogg.js`
+next to `enig-term-audio.js`, one per decode, so a decode never blocks the
+page and one that passes the 15 s limit is terminated. Where no Worker can
+start (the bundle served from another origin than the page, a Content
+Security Policy that refuses it, a browser without module Workers), they run
+on the page's thread as before: the limits above still bound them, but the
+15 s limit then only stops the wait. Under a Content Security Policy, the
+Worker must be allowed by `worker-src 'self'`; without `worker-src`, browsers
+check `child-src` and then `script-src`, so a policy with `script-src 'self'`
+already allows it. No `blob:` URL is used. If the server sends a policy with
+`enig-term-ogg.js` itself, the Worker runs under that policy, which then needs
+`'wasm-unsafe-eval'` in `script-src` like the page.
 
 | Format (libsndfile pm;ps) | Chromium | Firefox | WebKit |
 |---|---|---|---|

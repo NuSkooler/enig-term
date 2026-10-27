@@ -109,8 +109,13 @@ export interface EngineDeps {
     store?: AudioStore;
 }
 
+interface OggResult {
+    channelData: Float32Array[];
+    sampleRate: number;
+}
+
 interface OggModule {
-    decodeOgg(bytes: Uint8Array, maxBytes: number): Promise<{ channelData: Float32Array[]; sampleRate: number } | null>;
+    decodeOgg(bytes: Uint8Array, maxBytes: number): Promise<OggResult | null>;
 }
 
 declare const __ENIG_TERM_OGG_HASH__: string | undefined;
@@ -126,9 +131,11 @@ export class AudioEngine {
     private decoded = new Map<string, { md5: string; buf: Buf }>();
     private decodedBytes = 0;
     private ogg: Promise<OggModule | null> | null = null;
+    /** A module Worker could not run the Ogg decoders here; they run on this thread. */
+    private noWorker = false;
     private generation = 0;
     /** Counters (tests, diagnostics). */
-    readonly stats = { commands: 0, rejected: 0, decodes: 0, fallbackDecodes: 0, decodeFailures: 0, dropped: 0, errors: 0 };
+    readonly stats = { commands: 0, rejected: 0, decodes: 0, fallbackDecodes: 0, workerDecodes: 0, decodeTimeouts: 0, decodeFailures: 0, dropped: 0, errors: 0 };
 
     private readonly host: EngineHost;
     opts: EngineOptions;
@@ -362,24 +369,74 @@ export class AudioEngine {
     }
 
     private async fallback(data: Uint8Array): Promise<Buf | null> {
-        if (!this.ogg) {
-            const url = this.opts.oggUrl ?? new URL(`./enig-term-ogg.js${OGG_QUERY}`, import.meta.url);
-            this.ogg = import(/* @vite-ignore */ String(url)).then(
-                m => m as OggModule,
-                e => {
-                    this.host.log(`audio: the Ogg decoders could not be loaded: ${(e as Error)?.message ?? e}`);
-                    this.ogg = null;
-                    return null;
-                },
-            );
+        const url = String(this.opts.oggUrl ?? new URL(`./enig-term-ogg.js${OGG_QUERY}`, import.meta.url));
+        let r = await this.workerDecode(url, data);
+        if (r === undefined) {
+            // No Worker here (or it could not start): decode on this thread,
+            // where the timeout only stops the wait, not the decode.
+            if (!this.ogg) {
+                this.ogg = import(/* @vite-ignore */ url).then(
+                    m => m as OggModule,
+                    e => {
+                        this.host.log(`audio: the Ogg decoders could not be loaded: ${(e as Error)?.message ?? e}`);
+                        this.ogg = null;
+                        return null;
+                    },
+                );
+            }
+            const mod = await this.ogg;
+            if (!mod) return null;
+            r = await withTimeout(mod.decodeOgg(data, this.opts.memoryBytes).catch(() => null), this.opts.decodeMs);
         }
-        const mod = await this.ogg;
-        if (!mod) return null;
-        const r = await withTimeout(mod.decodeOgg(data, this.opts.memoryBytes).catch(() => null), this.opts.decodeMs);
         if (!r || !r.channelData.length || !r.channelData[0].length) return null;
         this.stats.fallbackDecodes++;
         const len = Math.min(r.channelData[0].length, Math.ceil(MAX_SECONDS * r.sampleRate) + 1);
         return this.deps.fromChannels(r.channelData.slice(0, 8).map(c => c.subarray(0, len)), r.sampleRate);
+    }
+
+    /**
+     * Decode in a module Worker running enig-term-ogg.js, terminated when it
+     * takes longer than `decodeMs`, so a runaway decode cannot freeze the page.
+     * undefined: no Worker (Node, an older browser, a cross-origin bundle, a
+     * CSP that refuses it); the caller decodes on this thread instead.
+     */
+    private workerDecode(url: string, data: Uint8Array): Promise<OggResult | null | undefined> {
+        if (typeof Worker === 'undefined' || this.noWorker) return Promise.resolve(undefined);
+        let w: Worker;
+        try {
+            w = new Worker(url, { type: 'module' });
+        } catch {
+            this.noWorker = true;
+            return Promise.resolve(undefined);
+        }
+        return new Promise(res => {
+            let started = false;
+            const done = (r: OggResult | null | undefined) => {
+                clearTimeout(timer);
+                w.terminate();
+                res(r);
+            };
+            const timer = setTimeout(() => {
+                this.stats.decodeTimeouts++;
+                this.host.log(`audio: the Ogg decode took longer than ${this.opts.decodeMs / 1000} s, stopped`);
+                done(null);
+            }, this.opts.decodeMs);
+            w.onmessage = (e: MessageEvent<OggResult | null | 'ready'>) => {
+                if (e.data === 'ready') {
+                    started = true;
+                    return;
+                }
+                this.stats.workerDecodes++;
+                done(e.data);
+            };
+            // Before 'ready': the script did not load or run as a module Worker.
+            w.onerror = e => {
+                e.preventDefault();
+                if (!started) this.noWorker = true;
+                done(started ? null : undefined);
+            };
+            w.postMessage({ bytes: data, maxBytes: this.opts.memoryBytes });
+        });
     }
 
     // --- time ---------------------------------------------------------------------------

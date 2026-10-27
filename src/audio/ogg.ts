@@ -1,6 +1,8 @@
 // Ogg Vorbis and Ogg Opus decoding for browsers whose decodeAudioData cannot
 // (older Safari). Loaded only when the browser's own decoder refused an Ogg
-// file (dist/enig-term-ogg.js).
+// file (dist/enig-term-ogg.js), as a module Worker so the engine can stop a
+// decode that runs too long (see the end of this file), or imported where a
+// Worker is not available.
 //
 // The codecs are libvorbis and libopus compiled to WebAssembly by eshaz's
 // wasm-audio-decoders (@wasm-audio-decoders/ogg-vorbis, opus-decoder; MIT,
@@ -238,4 +240,19 @@ async function decodeOpus(s: Stream, maxBytes: number): Promise<Decoded | null> 
     } finally {
         dec.free();
     }
+}
+
+// As a module Worker: 'ready' once loaded, then one message { bytes, maxBytes }
+// per decode, answered with the result (its channels transferred) or null.
+declare const WorkerGlobalScope: { new (): unknown } | undefined;
+if (typeof WorkerGlobalScope !== 'undefined' && globalThis instanceof WorkerGlobalScope) {
+    const scope = globalThis as unknown as {
+        onmessage: ((e: MessageEvent<{ bytes: Uint8Array; maxBytes: number }>) => void) | null;
+        postMessage(m: unknown, transfer: Transferable[]): void;
+    };
+    scope.onmessage = async e => {
+        const r = await decodeOgg(e.data.bytes, e.data.maxBytes).catch(() => null);
+        scope.postMessage(r, r ? r.channelData.map(c => c.buffer as ArrayBuffer) : []);
+    };
+    scope.postMessage('ready', []);
 }
