@@ -51,9 +51,10 @@ export interface EnigTermHandle {
     /** Forget the sounds boards stored in this browser (all boards). */
     clearSoundCache(): Promise<{ files: number; bytes: number }>;
     /**
-     * Receive files: "zmodem" waits for the board to start sending (ZModem
-     * downloads also start by themselves); "ymodem"/"xmodem" start now (start
-     * the board's side first). `name`: what an XModem file is saved as.
+     * Receive files: "zmodem" waits for the board to start sending (without
+     * it, a ZModem download asks first, or with zmodemDetect "auto" starts by
+     * itself); "ymodem"/"xmodem" start now (start the board's side first).
+     * `name`: what an XModem file is saved as.
      */
     download(protocol?: TransferProtocol, name?: string): boolean;
     /** Send files: "zmodem" waits for the board's receiver; "ymodem"/"xmodem" start now (XModem: one file). */

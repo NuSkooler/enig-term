@@ -81,6 +81,7 @@ const ui = (page: Page, sel: string) => page.locator('enig-term').locator(sel);
 /** Log in and get to the main menu (luciano_blocktronics flow). */
 async function login(page: Page) {
     await open(page);
+    await page.evaluate(() => (window as any).enigTerm.set('zmodemDetect', 'auto'));
     await page.evaluate(u => (window as any).enigTerm.connect(u), WS!);
     await waitState(page, 'connected');
     await waitText(page, 'lOGIN');

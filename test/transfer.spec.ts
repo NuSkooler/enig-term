@@ -17,10 +17,13 @@ const pad128 = (b: Buffer) => Buffer.concat([b, Buffer.alloc((128 - (b.length % 
 
 let seq = 0;
 
-/** Connect to the fake BBS running `peer`, and have it start the program. `detect`: zmodemDetect (not a URL parameter). */
-async function board(page: Page, params: Record<string, string>, query = '', detect: 'auto' | 'ask' | 'off' = 'auto') {
+/**
+ * Connect to the fake BBS running `peer`, and have it start the program.
+ * `detect`: zmodemDetect (not a URL parameter), or null for the default.
+ */
+async function board(page: Page, params: Record<string, string>, query = '', detect: 'auto' | 'ask' | 'off' | null = 'auto') {
     await open(page, query);
-    await page.evaluate(d => (window as any).enigTerm.set('zmodemDetect', d), detect);
+    if (detect) await page.evaluate(d => (window as any).enigTerm.set('zmodemDetect', d), detect);
     const id = `xfer-${Date.now()}-${++seq}`;
     const q = Object.entries(params).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('');
     await page.evaluate(u => (window as any).enigTerm.connect(u), fakeUrl(page, `xfer${q}`, id));
@@ -216,10 +219,10 @@ test('a file name from the board cannot spoof: format characters go, and the car
     await expect(ui(page, '[data-xf-list] bdi')).toHaveText(['Invoice_fdp.exe']);
 });
 
-test('ZModem download, "ask first": the offer waits for Receive', async ({ page }) => {
+test('ZModem download, "ask first" (the default): the offer waits for Receive', async ({ page }) => {
     test.skip(!LRZSZ, 'lrzsz not installed');
     const dl = downloads(page);
-    const id = await board(page, { peer: 'sz', set: 'small' }, '', 'ask');
+    const id = await board(page, { peer: 'sz', set: 'small' }, '', null);
     await expect.poll(() => phase(page), { timeout: 15_000 }).toBe('offer');
     await ui(page, '[data-act="xf-offer-accept"]').click();
     expect((await finished(page)).phase).toBe('done');

@@ -87,7 +87,7 @@ ENiGMA generates `version`, `endpoint` and `title`, then merges its
 | `audioMaxFile` | integer (MB) 1-64 | `16` | Largest sound file a board may store, load or send. |
 | `audioMemory` | integer (MB) 16-2048 | `192` | Decoded audio held at once (slots and channels). |
 | `transfers` | boolean | `true` | File transfers ([File transfers](transfers.md)): the Files button and ZModem detection. `false`: none (a board's ZModem start shows as text). |
-| `zmodemDetect` | `"auto"`, `"ask"` or `"off"` | `"auto"` | A ZModem download the board starts: begins at once, asks first, or is ignored (its bytes show as text). An upload the board starts always asks for files (unless `off`). A user setting. |
+| `zmodemDetect` | `"ask"`, `"auto"` or `"off"` | `"ask"` | A ZModem download the board starts: asks first (Receive or Refuse), begins at once, or is ignored (its bytes show as text). "ask" keeps a board from starting a download without a click. An upload the board starts always asks for files (unless `off`). A user setting. |
 | `transferMaxFile` | integer (MB) 1-4096 | `512` | Largest file saved through a browser download; a larger one is refused (ZModem skips it, X/YModem stop). A folder the user picked has no limit. |
 
 ## Precedence

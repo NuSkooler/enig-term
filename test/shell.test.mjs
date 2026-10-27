@@ -351,7 +351,7 @@ test('config: transfers, zmodemDetect and transferMaxFile; zmodemDetect is a use
     assert.deepEqual(o, { transfers: false, zmodemDetect: 'ask', transferMaxFile: 64 });
     assert.deepEqual(sanitize({ zmodemDetect: 'always', transferMaxFile: 0 }, w => warns.push(w)), {});
     assert.equal(warns.length, 2);
-    assert.deepEqual([DEFAULTS.transfers, DEFAULTS.zmodemDetect, DEFAULTS.transferMaxFile], [true, 'auto', 512]);
+    assert.deepEqual([DEFAULTS.transfers, DEFAULTS.zmodemDetect, DEFAULTS.transferMaxFile], [true, 'ask', 512], 'a board cannot start a download without a click');
     assert.equal(userMayChange(resolve({}), 'zmodemDetect'), true);
     assert.equal(userMayChange(resolve({ config: { lock: ['zmodemDetect'] } }), 'zmodemDetect'), false);
     assert.equal(fromUrlParams(new URLSearchParams('zmodemDetect=auto')).opts.zmodemDetect, undefined, 'not from the URL');

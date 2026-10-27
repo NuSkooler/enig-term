@@ -19,6 +19,10 @@
   characters, C1 controls and lookalike slashes, and dots and spaces at
   either end, so `Invoice_<U+202E>fdp.exe` cannot pass for `Invoice_exe.pdf`.
   The transfer card shows each name in a `<bdi>`.
+- `zmodemDetect` defaults to `"ask"` (was `"auto"`): a ZModem download the
+  board starts waits for Receive on the card, so a board cannot start one
+  without a click. `"auto"` (Files, "ZModem downloads: Start by
+  themselves") brings back the old behaviour; a saved choice is kept.
 
 ## 0.1.1 - 2026-10-27
 

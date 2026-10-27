@@ -1,6 +1,7 @@
-// File transfers for the terminal. ZModem starts by itself: the board's sz
-// or rz announces it in the stream (detect.ts), and a download begins at
-// once (or after asking, `zmodemDetect: "ask"`), an upload asks for files.
+// File transfers for the terminal. ZModem announces itself: the board's sz
+// or rz says so in the stream (detect.ts), and a download begins after the
+// user's yes (`zmodemDetect: "ask"`, the default) or at once ("auto"), an
+// upload asks for files.
 // The user can also prepare one from the Files panel (it waits for the
 // board). XModem and YModem cannot announce themselves, so they start from
 // the panel.

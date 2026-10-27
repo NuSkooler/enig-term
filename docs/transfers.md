@@ -6,8 +6,8 @@ the real program behind it (see [Tests](building.md#tests)).
 
 | ENiGMA protocol | The board runs (download / upload) | In enig-term |
 |---|---|---|
-| ZModem 8k (SEXYZ), `zmodem8kSexyz` | `sexyz -telnet -8 sz @list` / `sexyz -telnet -8 rz <dir>` | ZModem: starts by itself |
-| ZModem 8k, `zmodem8kSz` | lrzsz `sz --zmodem --try-8k --binary --restricted` / `rz --zmodem --binary --restricted` | ZModem: starts by itself |
+| ZModem 8k (SEXYZ), `zmodem8kSexyz` | `sexyz -telnet -8 sz @list` / `sexyz -telnet -8 rz <dir>` | ZModem: detected, starts after a click |
+| ZModem 8k, `zmodem8kSz` | lrzsz `sz --zmodem --try-8k --binary --restricted` / `rz --zmodem --binary --restricted` | ZModem: detected, starts after a click |
 | YModem (SEXYZ), `ymodemSexyz` | `sexyz -telnet sY @list` (1K blocks) / `sexyz -telnet ry <dir>` | YModem batch, from the Files panel |
 | XModem (SEXYZ), `xmodemSexyz` | `sexyz -telnet sX @list` (1K blocks) / `sexyz -telnet rC <file>` | XModem (checksum, CRC-16, 1K), from the Files panel |
 
@@ -17,10 +17,12 @@ ENiGMA offers no YModem-G, and enig-term has none.
 
 Pick the files on the board and start its download.
 
-ZModem starts by itself. The board's `sz` announces it with a ZRQINIT header,
-which the terminal takes off the stream before it is drawn, and receiving
-begins. `zmodemDetect: "ask"` shows the card first (Receive or Refuse).
-`"off"` leaves it alone, and its bytes then show as text. When detection is
+ZModem announces itself. The board's `sz` sends a ZRQINIT header, which the
+terminal takes off the stream before it is drawn, and the card asks first
+(Receive or Refuse): by default (`zmodemDetect: "ask"`) a board cannot start
+a download without a click. `"auto"` begins receiving at once (the Files
+panel's "ZModem downloads: Start by themselves"). `"off"` leaves it alone,
+and its bytes then show as text. When detection is
 off, Files → Download → ZModem → "Wait for the board" does the same for one
 transfer.
 

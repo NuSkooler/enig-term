@@ -14,6 +14,6 @@
   "scrollback": 2000,
   "autoReconnect": false,
   "transfers": true,
-  "zmodemDetect": "auto",
+  "zmodemDetect": "ask",
   "transferMaxFile": 512
 }

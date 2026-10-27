@@ -109,7 +109,7 @@ export interface Options {
     audioMemory: number;
     /** File transfers (ZModem, YModem, XModem): the Files panel and ZModem detection. */
     transfers: boolean;
-    /** A ZModem download the board starts: "auto" begins it, "ask" asks first, "off" leaves it on screen as text. */
+    /** A ZModem download the board starts: "ask" (the default) asks first, "auto" begins it, "off" leaves it on screen as text. */
     zmodemDetect: 'auto' | 'ask' | 'off';
     /** Largest file saved through a browser download, MB (larger ones are refused; a chosen folder has no limit). */
     transferMaxFile: number;
@@ -159,7 +159,7 @@ export const DEFAULTS: Readonly<Options> = Object.freeze({
     audioMaxFile: 16,
     audioMemory: 192,
     transfers: true,
-    zmodemDetect: 'auto',
+    zmodemDetect: 'ask',
     transferMaxFile: 512,
 }) as Options;
 
