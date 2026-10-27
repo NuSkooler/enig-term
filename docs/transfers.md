@@ -33,7 +33,11 @@ board's menu as a keystroke. XModem carries no file name, so the panel's
 receivers do.
 
 Each file is saved the moment it is complete, under the name the board sent
-(path parts and control characters removed), as a browser download. The
+(path parts, control characters, invisible format characters such as bidi
+overrides and zero-width spaces, and lookalike slashes removed; no dots or
+spaces at either end; at most 200 characters), as a browser download. The
+same name is used in a chosen folder, and the transfer card shows it isolated
+from the text around it. The
 browser may ask once before several. A Chromium browser can save into a folder
 instead (Files → "Save into a folder…", asked once per page). Files are then
 written as they arrive, with no size limit. Otherwise a file is kept as Blobs

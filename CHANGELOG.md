@@ -15,6 +15,10 @@
   file and send an unbounded one into browser memory.
 - A Telnet subnegotiation keeps at most 1 KB; the rest, up to IAC SE, is
   dropped. An unterminated one grew without limit.
+- Download names lose bidi controls, zero-width and other format
+  characters, C1 controls and lookalike slashes, and dots and spaces at
+  either end, so `Invoice_<U+202E>fdp.exe` cannot pass for `Invoice_exe.pdf`.
+  The transfer card shows each name in a `<bdi>`.
 
 ## 0.1.1 - 2026-10-27
 

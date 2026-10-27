@@ -124,6 +124,26 @@ test('YModem header: written as lrzsz and sexyz read it, parsed back, names made
     assert.equal(safeName('a\x1bb:c.txt'), 'a_b_c.txt');
 });
 
+test('safeName: no spoofing characters, no dots or spaces at the ends, capped, never empty', () => {
+    // Bidi overrides and isolates, marks, zero-width and other format characters go.
+    assert.equal(safeName('Invoice_\u202efdp.exe'), 'Invoice_fdp.exe');
+    for (const c of ['\u202a', '\u202b', '\u202c', '\u202d', '\u2066', '\u2067', '\u2068', '\u2069', '\u200e', '\u200f', '\u200b', '\u200d', '\u2060', '\ufeff', '\u00ad']) assert.equal(safeName(`a${c}b.txt`), 'ab.txt', `U+${c.codePointAt(0).toString(16)}`);
+    // C0, DEL and C1 controls, and line separators, become _.
+    assert.equal(safeName('x\u0085y\u009b\x7f\u2028.txt'), 'x_y___.txt');
+    // Lookalike slashes cannot make a name look like a path.
+    for (const c of ['\u2215', '\u2044', '\uff0f', '\u29f8', '\uff3c', '\u2216', '\ufe68', '\u29f9']) assert.equal(safeName(`etc${c}passwd`), 'etc_passwd', `U+${c.codePointAt(0).toString(16)}`);
+    // Dots and spaces at either end, including Unicode spaces.
+    assert.equal(safeName(' .. evil.exe. . '), 'evil.exe');
+    assert.equal(safeName('\u3000report.pdf\u00a0'), 'report.pdf');
+    // Capped at 200 characters (code points: a surrogate pair is not split).
+    assert.equal(Array.from(safeName('\u{1F600}'.repeat(300))).length, 200);
+    assert.equal(safeName('a'.repeat(300)).length, 200);
+    assert.equal(safeName('a'.repeat(199) + '. x'), 'a'.repeat(199), 'no trailing dot left by the cap');
+    // Nothing left: the fallback.
+    for (const n of ['', ' ', '...', '\u202e', '\u200b\u200b', '/']) assert.equal(safeName(n), 'download.bin', JSON.stringify(n));
+    assert.equal(safeName('\u2066', 'x.bin'), 'x.bin');
+});
+
 for (const proto of ['xmodem', 'xmodem-1k', 'ymodem']) {
     test(`${proto}: loopback, byte-identical (${proto === 'ymodem' ? 'size from the header' : 'SUB padding kept'})`, async () => {
         const data = allBytes(proto === 'xmodem' ? 5000 : 70_000);

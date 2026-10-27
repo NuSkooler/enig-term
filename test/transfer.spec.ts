@@ -8,7 +8,7 @@ import { test, expect, type Page, type Download } from '@playwright/test';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { fakeLog, fakeUrl, open, waitState } from './helpers';
-import { LRZSZ, SEXYZ, allBytes, random } from './xfer-peers.mjs';
+import { LRZSZ, SEXYZ, allBytes, craftedZmodem, random } from './xfer-peers.mjs';
 
 const sha = (b: Uint8Array) => crypto.createHash('sha256').update(b).digest('hex');
 const enc = (s: string) => Buffer.from(s, 'latin1');
@@ -202,6 +202,18 @@ test('ZModem upload prepared in the Files panel starts when the board does (10 M
     expect(st.phase, JSON.stringify(st)).toBe('done');
     const got = await gotFiles(page, id);
     expect(got.files).toEqual([{ name: 'big-up.bin', size: big.data.length, sha: sha(big.data) }]);
+});
+
+test('a file name from the board cannot spoof: format characters go, and the card isolates the name', async ({ page }) => {
+    const dl = downloads(page);
+    await open(page);
+    await page.evaluate(() => (window as any).enigTerm.set('zmodemDetect', 'auto'));
+    const z = craftedZmodem([{ name: 'Invoice_\u202efdp.exe', announce: '5', total: 5 }]).flatMap(c => [...c]);
+    await page.evaluate(b => (window as any).enigTerm.transfers.incoming(new Uint8Array(b)), z);
+    expect((await finished(page, 15_000)).phase).toBe('done');
+    await expect.poll(() => dl.length).toBe(1);
+    expect(dl[0].suggestedFilename()).toBe('Invoice_fdp.exe');
+    await expect(ui(page, '[data-xf-list] bdi')).toHaveText(['Invoice_fdp.exe']);
 });
 
 test('ZModem download, "ask first": the offer waits for Receive', async ({ page }) => {

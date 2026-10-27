@@ -124,6 +124,13 @@ function clock(sec: number): string {
     return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
+/** Text isolated from the bidi ordering of what surrounds it. */
+function bdi(text: string): HTMLElement {
+    const b = document.createElement('bdi');
+    b.textContent = text;
+    return b;
+}
+
 const STATE_TEXT: Record<ConnState, string> = {
     idle: 'Not connected',
     connecting: 'Connecting…',
@@ -574,7 +581,11 @@ export class Chrome {
         this.q('[data-xf-msg]').textContent = st.message ?? '';
         const f = st.file;
         const nth = f ? (f.count && f.count > 1 ? ` · ${f.index + 1} of ${f.count}` : f.index > 0 ? ` · file ${f.index + 1}` : '') : '';
-        this.q('[data-xf-file]').textContent = running && f ? `${f.name}${nth}` : '';
+        // File names come from the board: each in a <bdi>, so right-to-left
+        // text in one cannot reorder what is around it.
+        const fileEl = this.q('[data-xf-file]');
+        if (running && f) fileEl.replaceChildren(bdi(f.name), ...(nth ? [nth] : []));
+        else fileEl.replaceChildren();
         const bar = this.q('[data-xf-bar]');
         bar.hidden = !(running && f);
         const frac = f && f.size ? Math.min(1, st.fileBytes / f.size) : f && f.size === 0 ? 1 : null;
@@ -596,7 +607,7 @@ export class Chrome {
                 const li = document.createElement('li');
                 li.className = x.ok ? 'ok' : 'bad';
                 const name = document.createElement('span');
-                name.textContent = `${x.ok ? '✓' : '✗'} ${x.name} (${size(x.size)})${x.skipped ? ': skipped, too large' : x.ok ? (up ? '' : x.where === 'folder' ? ': saved in the folder' : '') : ': incomplete'}`;
+                name.append(`${x.ok ? '✓' : '✗'} `, bdi(x.name), ` (${size(x.size)})${x.skipped ? ': skipped, too large' : x.ok ? (up ? '' : x.where === 'folder' ? ': saved in the folder' : '') : ': incomplete'}`);
                 li.appendChild(name);
                 if (x.ok && x.url) {
                     const a = document.createElement('a');

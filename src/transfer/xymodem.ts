@@ -116,11 +116,24 @@ export function wireName(name: string): string {
     return s || 'file';
 }
 
-/** A received file name made safe to save: no path, no control characters, not empty. */
+/** Slashes in other clothes (division, fraction, fullwidth, ...): shown in a name they look like a path. */
+const LOOKALIKE_SLASHES = /[\u2044\u2215\u2216\u29f8\u29f9\ufe68\uff0f\uff3c]/g;
+
+/**
+ * A received file name made safe to save and to show: no path, no control
+ * characters, no invisible format characters (bidi overrides that would show
+ * "fdp.exe" as "exe.pdf", zero-width ones), no lookalike slashes, no dots or
+ * spaces at either end, at most 200 characters, and not empty.
+ */
 export function safeName(raw: string, fallback = 'download.bin'): string {
     const base = raw.split(/[\\/]/).pop() ?? '';
-    const s = base.replace(/[\x00-\x1f\x7f"*:<>?|]/g, '_').replace(/^\.+/, '').trim().slice(0, 200);
-    return s || fallback;
+    const s = base
+        .replace(/\p{Cf}/gu, '')
+        .replace(/[\p{Cc}\p{Zl}\p{Zp}"*:<>?|]/gu, '_')
+        .replace(LOOKALIKE_SLASHES, '_')
+        .replace(/^[\s.]+/u, '');
+    const capped = Array.from(s).slice(0, 200).join('').replace(/[\s.]+$/u, '');
+    return capped || fallback;
 }
 
 /**
