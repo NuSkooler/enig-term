@@ -24,6 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # The runner has no sound output: audio specs are local-only (playwright.config.ts).
+  ENIG_TERM_SKIP_AUDIO: '1'
   RUST_TOOLCHAIN: 1.96.0
   WASM_BINDGEN_VERSION: 0.2.129
   WASM_BINDGEN_SHA256: 82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e

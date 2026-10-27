@@ -32,6 +32,8 @@ if (wk.ok) {
 
 export default defineConfig({
     testDir: 'test',
+    // CI has no sound output; the audio specs run locally (and by ear).
+    testIgnore: process.env.ENIG_TERM_SKIP_AUDIO ? /audio(-interop)?\.spec\.ts/ : undefined,
     timeout: 60_000,
     fullyParallel: false,
     workers: 1,
