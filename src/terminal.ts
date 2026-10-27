@@ -138,6 +138,8 @@ export class Terminal {
     private reconnectDelay = RECONNECT_MIN_MS;
     private needsDraw = true;
     private raf = 0;
+    /** A BEL came since the last frame: one bell event (and flash) per frame, however many. */
+    private bellPending = false;
     private textBlinkOn = true;
     private cursorOn = true;
     private devW = 0;
@@ -501,6 +503,10 @@ export class Terminal {
     private loop = (): void => {
         if (this.destroyed) return;
         this.raf = requestAnimationFrame(this.loop);
+        if (this.bellPending) {
+            this.bellPending = false;
+            this.events.emit('bell', {});
+        }
         const now = performance.now() - this.t0;
         if (this.blinkOn) {
             const text = Math.floor(now / TEXT_BLINK_MS) % 2 === 0;
@@ -744,7 +750,7 @@ export class Terminal {
                 void this.loadMissing(ev.height, ev.missing);
                 break;
             case 'bell':
-                this.events.emit('bell', {});
+                this.bellPending = true;
                 break;
             case 'title':
                 this.title = ev.text;

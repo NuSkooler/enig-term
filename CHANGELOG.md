@@ -23,6 +23,9 @@
   board starts waits for Receive on the card, so a board cannot start one
   without a click. `"auto"` (Files, "ZModem downloads: Start by
   themselves") brings back the old behaviour; a saved choice is kept.
+- A flood of BELs is one bell per animation frame: one `bell` event and
+  one flash. Each BEL forced a layout and fired an event, so a board could
+  stall the page with them.
 
 ## 0.1.1 - 2026-10-27
 

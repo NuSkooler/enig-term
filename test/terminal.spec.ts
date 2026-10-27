@@ -187,6 +187,21 @@ test('settings persist in localStorage; a throwing localStorage does not break t
     await page2.close();
 });
 
+test('a flood of BELs is one bell (event and flash) per frame', async ({ page }) => {
+    await open(page);
+    const n = await page.evaluate(async () => {
+        const t = (window as any).enigTerm;
+        let n = 0;
+        t.events.on('bell', () => n++);
+        t.write('\x07'.repeat(100_000));
+        t.write('\x07'.repeat(100_000));
+        for (let i = 0; i < 3; i++) await new Promise(r => requestAnimationFrame(r));
+        return n;
+    });
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(n).toBeLessThanOrEqual(3);
+});
+
 test('full screen toggles (element fullscreen, or the viewport-covering fallback)', async ({ page }) => {
     await open(page);
     const btn = page.locator('enig-term').locator('[data-act="fullscreen"]');
