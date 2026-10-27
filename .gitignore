@@ -10,6 +10,7 @@ config.json
 dev-config.json
 # Screenshots from test runs (checked by eye, not committed).
 test/screenshots/
-# Spike outputs that show third-party art (kept local only).
-docs/spike/*enigma*
+# Spike screenshots and logs (kept local only: icy's unprovenanced fonts, theme art).
+docs/spike/*.png
+docs/spike/*-log.txt
 test/amiga-fonts/
