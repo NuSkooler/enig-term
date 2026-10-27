@@ -37,7 +37,9 @@ receivers do.
 Each file is saved the moment it is complete, under the name the board sent
 (path parts, control characters, invisible format characters such as bidi
 overrides and zero-width spaces, and lookalike slashes removed; no dots or
-spaces at either end; at most 200 characters), as a browser download. The
+spaces at either end; fullwidth forms of the characters Windows refuses;
+Windows device names such as `CON` or `NUL` get a leading underscore; at most
+200 characters and 240 bytes), as a browser download. The
 same name is used in a chosen folder, and the transfer card shows it isolated
 from the text around it. The
 browser may ask once before several. A Chromium browser can save into a folder
@@ -47,7 +49,8 @@ written as they arrive, with no size limit. Otherwise a file is kept as Blobs
 larger than `transferMaxFile` (512 MB) is refused: ZModem skips just that
 file, X/YModem stop. The limit holds for the bytes that actually arrive too:
 a ZModem sender that announces a small file and sends more is stopped once it
-passes `transferMaxFile`, or the announced size by more than 8 KB. A file that
+passes `transferMaxFile`, or the announced size by more than 8 KB (a ZFILE
+with no size counts as 0 bytes). A file that
 ends short of the size the board announced (YModem's header, ZModem's ZFILE)
 is reported incomplete and not saved.
 

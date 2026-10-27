@@ -109,8 +109,9 @@ const TEMPLATE = html`
   </dialog>
   <dialog data-connectdialog aria-labelledby="et-connect-h">
     <h2 id="et-connect-h">Connect to this board?</h2>
+    <code class="url" data-connecthost></code>
     <code class="url" data-connecturl></code>
-    <p class="why">The address came from the link that opened this page.</p>
+    <p class="why" data-connectwhy>The address came from the link that opened this page.</p>
     <div class="actions"><button type="button" data-act="connect-cancel">Cancel</button><button type="button" class="primary" data-act="connect-ok">Connect</button></div>
   </dialog>
 </div>`;
@@ -377,7 +378,26 @@ export class Chrome {
     confirmConnect(endpoint: string): void {
         const d = this.q<HTMLDialogElement>('[data-connectdialog]');
         this.pendingConnect = endpoint;
-        this.q('[data-connecturl]').textContent = checkEndpoint(endpoint, this.opts.allowInsecure).url;
+        // The host on its own line (punycode for an IDN), then the whole address.
+        // An address with a user name in it ("wss://bank.com@evil.example") hides
+        // the real host in plain sight: not offered.
+        const check = checkEndpoint(endpoint, this.opts.allowInsecure);
+        let host = '';
+        let creds = false;
+        try {
+            const u = new URL(check.url);
+            host = u.host;
+            creds = !!(u.username || u.password);
+        } catch {
+            /* the reason below says it */
+        }
+        this.q('[data-connecthost]').textContent = host;
+        this.q('[data-connecturl]').textContent = check.url;
+        const why = this.q('[data-connectwhy]');
+        const refuse = creds ? 'it has a user name or password in it' : !check.ok ? (check.reason ?? 'not a valid address') : '';
+        why.textContent = refuse ? `This address cannot be used: ${refuse}.` : 'The address came from the link that opened this page.';
+        this.q<HTMLButtonElement>('[data-act="connect-ok"]').hidden = !!refuse;
+        if (refuse) this.pendingConnect = '';
         try {
             d.showModal();
         } catch {

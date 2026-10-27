@@ -217,6 +217,37 @@ test('an OSC title is capped at 256 characters before the event and the page tit
     expect(r.doc).toBeLessThanOrEqual(256 + ' - enig-term'.length);
 });
 
+test('an OSC title cut at 256 characters never cuts a surrogate pair', async ({ page }) => {
+    await open(page);
+    const r = await page.evaluate(async () => {
+        const t = (window as any).enigTerm;
+        const got: string[] = [];
+        t.events.on('title', (e: any) => got.push(e.title));
+        // 255 letters, then an emoji (two UTF-16 units) straddling the 256 mark, then more.
+        t.write(new TextEncoder().encode(`\x1b]2;${'T'.repeat(255)}\u{1F600}${'U'.repeat(50)}\x07`));
+        await new Promise(r => requestAnimationFrame(r));
+        return { got, well: got.every(s => s.isWellFormed()), doc: document.title.isWellFormed() };
+    });
+    expect(r.got.length).toBe(1);
+    expect(Array.from(r.got[0]).length).toBe(256);
+    expect(r.well).toBe(true);
+    expect(r.doc).toBe(true);
+});
+
+test('an endpoint with a user name in it is named by its real host and cannot be connected', async ({ page }) => {
+    await page.goto(`/?blink=0&endpoint=${encodeURIComponent('wss://bank.example@evil.example/x')}&connect=1`);
+    await page.waitForFunction(() => document.body.dataset.ready === '1');
+    const ask = page.locator('enig-term').locator('[data-connectdialog]');
+    await expect(ask).toBeVisible();
+    await expect(ask.locator('[data-connecthost]')).toHaveText('evil.example');
+    await expect(ask.locator('[data-act="connect-ok"]')).toBeHidden();
+    await expect(ask).toContainText('user name');
+    // An IDN host is shown as punycode.
+    await page.goto(`/?blink=0&endpoint=${encodeURIComponent('wss://b\u00e4nk.example/')}&connect=1`);
+    await page.waitForFunction(() => document.body.dataset.ready === '1');
+    await expect(page.locator('enig-term').locator('[data-connecthost]')).toHaveText('xn--bnk-qla.example');
+});
+
 test('full screen toggles (element fullscreen, or the viewport-covering fallback)', async ({ page }) => {
     await open(page);
     const btn = page.locator('enig-term').locator('[data-act="fullscreen"]');

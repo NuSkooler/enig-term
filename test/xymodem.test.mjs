@@ -136,12 +136,23 @@ test('safeName: no spoofing characters, no dots or spaces at the ends, capped, n
     assert.equal(safeName(' .. evil.exe. . '), 'evil.exe');
     assert.equal(safeName('\u3000report.pdf\u00a0'), 'report.pdf');
     // Capped at 200 characters (code points: a surrogate pair is not split).
-    assert.equal(Array.from(safeName('\u{1F600}'.repeat(300))).length, 200);
+    assert.equal(Array.from(safeName('\u{1F600}'.repeat(300))).length, 60, '240 bytes, not 200 characters');
     assert.equal(safeName('a'.repeat(300)).length, 200);
     assert.equal(safeName('a'.repeat(199) + '. x'), 'a'.repeat(199), 'no trailing dot left by the cap');
     // Nothing left: the fallback.
     for (const n of ['', ' ', '...', '\u202e', '\u200b\u200b', '/']) assert.equal(safeName(n), 'download.bin', JSON.stringify(n));
     assert.equal(safeName('\u2066', 'x.bin'), 'x.bin');
+    // Windows device names, with or without an extension, trailing dots or spaces.
+    for (const n of ['CON', 'nul', 'COM1', 'lpt9', 'con.txt', 'NUL.tar.gz', 'aux .txt', 'PRN.', 'COM\u00b2']) assert.match(safeName(n), /^_/, n);
+    assert.equal(safeName('console.txt'), 'console.txt');
+    assert.equal(safeName('com10'), 'com10');
+    // Fullwidth and compatibility forms of what Windows refuses, lookalike dots, lone surrogates.
+    assert.equal(safeName('a\uff1ab\uff0ac\uff1fd\uff5ce'), 'a_b_c_d_e');
+    assert.equal(safeName('\uff0ebashrc'), 'bashrc');
+    assert.equal(safeName('a\u2024\ufe52'), 'a');
+    assert.equal(safeName('a\ud800b'), 'a_b');
+    // At most 240 bytes whatever the characters.
+    for (const c of ['\u540d', '\u{1F600}', 'e\u0301', 'a']) assert.ok(Buffer.byteLength(safeName(c.repeat(400))) <= 240, c);
 });
 
 for (const proto of ['xmodem', 'xmodem-1k', 'ymodem']) {

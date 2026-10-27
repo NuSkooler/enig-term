@@ -18,7 +18,10 @@
 - Download names lose bidi controls, zero-width and other format
   characters, C1 controls and lookalike slashes, and dots and spaces at
   either end, so `Invoice_<U+202E>fdp.exe` cannot pass for `Invoice_exe.pdf`.
-  The transfer card shows each name in a `<bdi>`.
+  Fullwidth forms of `:` `*` `?` and the like, lone surrogates and Windows
+  device names (`CON`, `NUL`, `COM1`) are dealt with too, and a name is cut
+  to 240 bytes, which a chosen folder needs. The transfer card shows each
+  name in a `<bdi>`.
 - `zmodemDetect` defaults to `"ask"` (was `"auto"`): a ZModem download the
   board starts waits for Receive on the card, so a board cannot start one
   without a click. `"auto"` (Files, "ZModem downloads: Start by
@@ -26,8 +29,12 @@
 - A flood of BELs is one bell per animation frame: one `bell` event and
   one flash. Each BEL forced a layout and fired an event, so a board could
   stall the page with them.
-- An OSC 0/2 window title is cut to 256 characters before the `title`
-  event and the standalone page's title see it.
+- An OSC 0/2 window title is cut to 256 characters (code points, so an
+  emoji is never cut in two) before the `title` event and the standalone
+  page's title see it.
+- The "Connect to this board?" confirmation names the host on its own line
+  (punycode for an IDN) and refuses an address with a user name in it, as in
+  `wss://bank.example@evil.example`.
 - `javascript:`, `data:`, `vbscript:`, `file:` and `blob:` links are
   refused even when `linkSchemes` lists them, and Cancel, not Open, has the
   focus in the link confirmation. docs/embedding.md now says a `link`

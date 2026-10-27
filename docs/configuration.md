@@ -20,7 +20,8 @@ more (sound, ZModem auto-start, file sizes):
 
 An endpoint from the URL never connects by itself, whatever sets
 `autoConnect`: the page asks first ("Connect to this board?", naming the
-address, Cancel focused), so a crafted link cannot point the operator's page
+address with its host on a line of its own, Cancel focused; an address with a
+user name in it is refused), so a crafted link cannot point the operator's page
 at another board. `connect=1` with the endpoint from `config.json` (or the
 attributes) connects at once.
 
