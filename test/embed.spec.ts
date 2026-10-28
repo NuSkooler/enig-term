@@ -89,3 +89,28 @@ test('an engine panic recovers every terminal on the page', async ({ page }) => 
     });
     expect(r).toEqual(['A ok', 'B ok']);
 });
+
+test('handle.setOption saves a user setting only with { save: true }, and never a locked or non-user key', async ({ page }) => {
+    await page.goto('/fixtures/embed.html');
+    await page.waitForFunction(() => (window as any).handles?.length === 2 && (window as any).handles[0]);
+    const r = await page.evaluate(async () => {
+        localStorage.removeItem('enig-term:settings:v1');
+        const saved = () => JSON.parse(localStorage.getItem('enig-term:settings:v1') ?? '{}');
+        const { default: EnigTerm } = await import('/_enig/ws-term/enig-term.js' as string);
+        const box = document.createElement('div');
+        document.body.append(box);
+        const h = await EnigTerm.mount(box, { blink: false, lock: ['scale'] });
+        h.setOption('aspect', false);
+        const plain = saved();
+        h.setOption('crt', true, { save: true });
+        h.setOption('scale', 'integer', { save: true });
+        h.setOption('scrollback', 500, { save: true });
+        const out = { plain, after: saved(), applied: [h.getOption('aspect'), h.getOption('crt'), h.getOption('scale'), h.getOption('scrollback')] };
+        h.destroy();
+        localStorage.removeItem('enig-term:settings:v1');
+        return out;
+    });
+    expect(r.plain).toEqual({});
+    expect(r.after).toEqual({ crt: true });
+    expect(r.applied).toEqual([false, true, 'integer', 500]);
+});

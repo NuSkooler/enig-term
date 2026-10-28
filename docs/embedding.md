@@ -45,7 +45,13 @@ term.connect();
 The handle has:
 
 - `connect(endpoint?)`, `disconnect()`
-- `setOption(key, value)`, `getOption(key)`
+- `setOption(key, value, { save })`, `getOption(key)`. A value set this way
+  applies to this page only. With `{ save: true }` it is also saved as the
+  user's setting, as the Settings panel saves it (for a page's own controls, or
+  to carry a preference over from another terminal). That holds only for the
+  user-settable keys ([Settings](configuration.md#settings)) that are not in
+  `lock`, and only when `persist` is on; other keys are still applied, but not
+  saved.
 - `on(event, fn)`, which returns an unsubscribe function
 - `send(text)`, `paste(text)`, and `write(data)` (as if from the host)
 - `copySelection()`, `focus()`, `resize(cols, rows)`, `toggleFullscreen()`

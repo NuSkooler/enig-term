@@ -5,6 +5,7 @@ import {
     resolve,
     sanitize,
     startAction,
+    userMayChange,
     type Options,
     type UserSettings,
 } from './config.ts';
@@ -30,8 +31,12 @@ export interface EnigTermHandle {
     /** Connect to the configured endpoint, or to `endpoint`. Returns false if it was refused (see the state event). */
     connect(endpoint?: string): boolean;
     disconnect(): void;
-    /** Change an option at run time (crt, aspect, scale, keyBar, autoReconnect, backspace, scrollback, endpoint, title, ...). */
-    setOption<K extends keyof Options>(key: K, value: Options[K]): void;
+    /**
+     * Change an option at run time (crt, aspect, scale, keyBar, autoReconnect, backspace, scrollback, endpoint, title, ...).
+     * `save: true` also saves it as the user's setting, as the Settings panel does: only a
+     * user-settable key not in `lock`, and only when `persist` is on. Anything else is still applied.
+     */
+    setOption<K extends keyof Options>(key: K, value: Options[K], how?: { save?: boolean }): void;
     getOption<K extends keyof Options>(key: K): Options[K];
     /** Subscribe to an event: state, title, bell, link, notice, recovered, scroll, selection, profile, sound, transfer. Returns an unsubscribe function. */
     on<K extends TermEventName>(event: K, fn: (ev: TermEvents[K]) => void): () => void;
@@ -126,11 +131,13 @@ export async function mount(el: HTMLElement, options: MountOptions = {}): Promis
             return ok;
         },
         disconnect: () => term.disconnect(),
-        setOption: (key, value) => {
+        setOption: (key, value, how) => {
             const clean = sanitize({ [key]: value } as Record<string, unknown>, warn) as Partial<Options>;
             if (!(key in clean)) return;
             opts[key] = clean[key] as Options[typeof key];
-            chrome.setOption(key, clean[key] as Options[typeof key]);
+            // Saved as the user's own choice only where the user could have made it.
+            const save = how?.save === true && userMayChange(opts, key);
+            chrome.setOption(key, clean[key] as Options[typeof key], save);
         },
         getOption: key => term.opts[key] ?? opts[key],
         on: (event, fn) => term.events.on(event, fn),
