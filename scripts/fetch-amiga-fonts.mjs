@@ -29,6 +29,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const SOURCE = {
     name: 'Multi Platform Amiga Fonts v1.02 (TrueSchool)',
@@ -181,4 +182,6 @@ async function main() {
     console.log(`wrote ${names.length + 1} files to ${o.out}`);
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(new URL(import.meta.url).pathname)) await main();
+// fileURLToPath, not URL.pathname: on Windows the pathname is "/C:/...", which
+// realpathSync cannot resolve, and this line runs on import too.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) await main();

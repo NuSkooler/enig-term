@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readZip } from './fonts/zip.mjs';
 import { pixelFont } from './fonts/sfnt.mjs';
 import { writePsf2 } from './fonts/psf.mjs';
@@ -210,7 +210,9 @@ async function main() {
     for (const [cp, b] of Object.entries(built)) if (b.missing.length) console.log(`  ${cp}: blank ${b.missing.join(', ')}`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL, not `file://${argv[1]}`: a Windows path never matched, so
+// main() silently did not run.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     main().catch(e => {
         console.error(`build-fonts: ${e.message}`);
         process.exit(1);

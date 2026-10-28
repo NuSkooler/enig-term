@@ -55,6 +55,15 @@ test('fetch-amiga-fonts: one tampered font among good files still fails', { skip
     await assert.rejects(build({ from: mirror(bad) }), /checksum mismatch for raw\/Topaz_a1200_v1\.0\.raw/);
 });
 
+test('fetch-amiga-fonts: runs as a command from another directory, by a relative path', () => {
+    // The entry-point check compared paths in a way Windows could not resolve,
+    // and it runs on import too, so the script failed before doing anything.
+    const cwd = tmp();
+    const r = spawnSync(process.execPath, [path.relative(cwd, SCRIPT), '--help'], { cwd, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /install the Amiga fonts/);
+});
+
 test('fetch-amiga-fonts: bad usage exits 2', () => {
     const r = spawnSync(process.execPath, [SCRIPT, '--kickstart', '3'], { encoding: 'utf8' });
     assert.equal(r.status, 2);
