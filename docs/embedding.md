@@ -51,7 +51,9 @@ The handle has:
   to carry a preference over from another terminal). That holds only for the
   user-settable keys ([Settings](configuration.md#settings)) that are not in
   `lock`, and only when `persist` is on; other keys are still applied, but not
-  saved.
+  saved. A saved setting is the user's own: on later loads it ranks above the
+  page's options and the config, as one saved from Settings does, unless the
+  config locks that key.
 - `on(event, fn)`, which returns an unsubscribe function
 - `send(text)`, `paste(text)`, and `write(data)` (as if from the host)
 - `copySelection()`, `focus()`, `resize(cols, rows)`, `toggleFullscreen()`
