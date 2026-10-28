@@ -55,14 +55,40 @@ test('fetch-amiga-fonts: one tampered font among good files still fails', { skip
     await assert.rejects(build({ from: mirror(bad) }), /checksum mismatch for raw\/Topaz_a1200_v1\.0\.raw/);
 });
 
-test('fetch-amiga-fonts: runs as a command from another directory, by a relative path', () => {
-    // The entry-point check compared paths in a way Windows could not resolve,
-    // and it runs on import too, so the script failed before doing anything.
-    const cwd = tmp();
-    const r = spawnSync(process.execPath, [path.relative(cwd, SCRIPT), '--help'], { cwd, encoding: 'utf8' });
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /install the Amiga fonts/);
-});
+// The entry-point checks compared paths in ways Windows could not resolve
+// (fetch-amiga-fonts failed on import; build-fonts silently did nothing), and
+// a symlinked script never matched. Each case is run as a command.
+const BUILD_FONTS = path.join(here, '..', 'scripts', 'build-fonts.mjs');
+const runs = {
+    // --help exits 0 and writes nothing.
+    'fetch-amiga-fonts': [SCRIPT, ['--help'], r => {
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /install the Amiga fonts/);
+    }],
+    // A file that is not the font pack fails its checksum before anything is written.
+    'build-fonts': [BUILD_FONTS, [fileURLToPath(import.meta.url)], r => {
+        assert.equal(r.status, 1, r.stderr);
+        assert.match(r.stderr, /build-fonts: font pack SHA-256 mismatch/);
+    }],
+};
+
+for (const [name, [script, args, check]] of Object.entries(runs)) {
+    test(`${name}: runs as a command by a relative path`, () => {
+        // From test/, so the path stays relative even when the temp directory is on another drive.
+        check(spawnSync(process.execPath, [path.relative(here, script), ...args], { cwd: here, encoding: 'utf8' }));
+    });
+
+    test(`${name}: runs as a command through a symlink`, t => {
+        const cwd = tmp();
+        try {
+            fs.symlinkSync(script, path.join(cwd, 'link.mjs'));
+        } catch (e) {
+            if (e.code === 'EPERM') return t.skip('symlinks need Developer Mode or admin on Windows');
+            throw e;
+        }
+        check(spawnSync(process.execPath, ['link.mjs', ...args], { cwd, encoding: 'utf8' }));
+    });
+}
 
 test('fetch-amiga-fonts: bad usage exits 2', () => {
     const r = spawnSync(process.execPath, [SCRIPT, '--kickstart', '3'], { encoding: 'utf8' });

@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { readZip } from './fonts/zip.mjs';
 import { pixelFont } from './fonts/sfnt.mjs';
 import { writePsf2 } from './fonts/psf.mjs';
@@ -210,9 +210,19 @@ async function main() {
     for (const [cp, b] of Object.entries(built)) if (b.missing.length) console.log(`  ${cp}: blank ${b.missing.join(', ')}`);
 }
 
-// pathToFileURL, not `file://${argv[1]}`: a Windows path never matched, so
-// main() silently did not run.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/**
+ * Run as a command, not on import. Real paths on both sides: Node runs a
+ * symlinked script from its real path, and a Windows path is not a file:// URL.
+ */
+function isMain() {
+    try {
+        return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    } catch {
+        return false; // no argv[1] (node -e, the REPL)
+    }
+}
+
+if (isMain()) {
     main().catch(e => {
         console.error(`build-fonts: ${e.message}`);
         process.exit(1);
