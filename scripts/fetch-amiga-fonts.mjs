@@ -29,6 +29,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const SOURCE = {
     name: 'Multi Platform Amiga Fonts v1.02 (TrueSchool)',
@@ -181,4 +182,17 @@ async function main() {
     console.log(`wrote ${names.length + 1} files to ${o.out}`);
 }
 
-if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(new URL(import.meta.url).pathname)) await main();
+/**
+ * Run as a command, not on import. Real paths on both sides: Node runs a
+ * symlinked script from its real path. fileURLToPath, not URL.pathname: on
+ * Windows the pathname is "/C:/...", which realpathSync cannot resolve.
+ */
+function isMain() {
+    try {
+        return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    } catch {
+        return false; // no argv[1] (node -e, the REPL)
+    }
+}
+
+if (isMain()) await main();

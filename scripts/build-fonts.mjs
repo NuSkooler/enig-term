@@ -210,7 +210,19 @@ async function main() {
     for (const [cp, b] of Object.entries(built)) if (b.missing.length) console.log(`  ${cp}: blank ${b.missing.join(', ')}`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Run as a command, not on import. Real paths on both sides: Node runs a
+ * symlinked script from its real path, and a Windows path is not a file:// URL.
+ */
+function isMain() {
+    try {
+        return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    } catch {
+        return false; // no argv[1] (node -e, the REPL)
+    }
+}
+
+if (isMain()) {
     main().catch(e => {
         console.error(`build-fonts: ${e.message}`);
         process.exit(1);

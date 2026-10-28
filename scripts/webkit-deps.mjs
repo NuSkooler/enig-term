@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const CACHE = path.join(process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), '.cache'), 'enig-term', 'wkdeps');
 const LAUNCHER = path.join(CACHE, 'webkit-run.sh');
@@ -141,7 +141,19 @@ function fetchDebs(wpe, missing) {
     return true;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/**
+ * Run as a command, not on import (playwright.config.ts imports this). Real
+ * paths on both sides: Node runs a symlinked script from its real path.
+ */
+function isMain() {
+    try {
+        return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+    } catch {
+        return false; // no argv[1] (node -e, the REPL)
+    }
+}
+
+if (isMain()) {
     const check = process.argv.includes('--check');
     const wpe = findWpe();
     if (!wpe) {
