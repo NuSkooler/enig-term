@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 - 2026-10-28
+
+- `handle.setOption(key, value, { save: true })` also saves the value as
+  the user's setting, as the Settings panel does: only for the
+  user-settable keys that are not in `lock`, and only when `persist` is on.
+  Other keys are still applied. Without `{ save: true }` nothing changes.
+  It lets a page drive a setting from its own control, or carry a
+  preference over from another terminal, without writing enig-term's
+  storage itself.
+- `tools/fetch-amiga-fonts.mjs` runs on Windows. In 0.3.0 it failed at
+  once with `ENOENT ... 'C:\C:'`, even when only imported.
+- `scripts/build-fonts.mjs` runs on Windows, where it silently did
+  nothing. It and `scripts/webkit-deps.mjs` also run when started through a
+  symlink. The three scripts use the same entry-point check.
+- CI runs the font tool tests on Windows too.
+
 ## 0.3.0 - 2026-10-27
 
 The engine moves to icy_tools 274262d8 (upstream master), which includes
