@@ -75,6 +75,12 @@ export class Input {
 
     focus(): void {
         this.textarea.focus({ preventScroll: true });
+        // Chrome can give the focus back from a closed <dialog> (the link and
+        // connect dialogs) with no live caret: keydown still arrives, so named
+        // keys work, but no text is inserted and no input event fires, so
+        // typed letters are lost until the focus really moves. Placing the
+        // caret again revives it. Not during an IME composition.
+        if (!this.composing) this.resetCaret();
     }
 
     get focused(): boolean {

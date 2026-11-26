@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- In Chrome, typing works again after the link or connect dialog closes
+  by its buttons. The focus came back to the terminal with no live caret:
+  Enter, arrows and other named keys still went out, but letters did not,
+  until the focus moved elsewhere and back (the Live or Full screen
+  button). Closing with Escape, and Firefox, were not affected.
+
 ## 0.3.1 - 2026-10-28
 
 - `handle.setOption(key, value, { save: true })` also saves the value as
