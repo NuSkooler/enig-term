@@ -1,7 +1,7 @@
 // OSC 8 links (hover, confirmation with the full URL, noopener, scheme
 // policy, embedder override) and selection/copy.
 import { test, expect, type Page } from '@playwright/test';
-import { open, write, cellPoint, shot, loadPcFont, ESC, CSI, ST } from './helpers';
+import { open, write, cellPoint, shot, loadPcFont, captureSent, sent, ESC, CSI, ST } from './helpers';
 
 async function stubOpen(page: Page) {
     await page.evaluate(() => {
@@ -43,6 +43,28 @@ test('hover shows a link; click asks first with the full URL; Open uses noopener
     await page.mouse.click(p.x, p.y);
     await dialog.locator('[data-act="link-open"]').click();
     expect(await page.evaluate(() => (window as any).opened)).toEqual([[LINK, '_blank', 'noopener,noreferrer']]);
+});
+
+test('typed text still goes out after the link dialog closes, by Cancel or Open', async ({ page }) => {
+    await open(page);
+    await stubOpen(page);
+    await captureSent(page);
+    await write(page, `${CSI}2J${CSI}1;1H${ESC}]8;;${LINK}${ST}a link${ESC}]8;;${ST}`);
+    const p = await cellPoint(page, 2, 0);
+    const dialog = page.locator('enig-term').locator('[data-linkdialog]');
+    for (const button of ['link-cancel', 'link-open']) {
+        // (Wait out the double-click interval: two quick clicks select a word.)
+        await page.waitForTimeout(450);
+        await page.mouse.click(p.x, p.y);
+        await expect(dialog).toBeVisible();
+        await dialog.locator(`[data-act="${button}"]`).click();
+        await expect(dialog).toBeHidden();
+        await sent(page);
+        // In Chrome the focus came back with no live caret: keydown arrived,
+        // text did not.
+        await page.keyboard.type('hi');
+        expect(await sent(page), button).toEqual([0x68, 0x69]);
+    }
 });
 
 test('non-http(s) links are shown but cannot be opened', async ({ page }) => {
